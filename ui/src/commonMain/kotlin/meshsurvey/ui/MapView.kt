@@ -12,7 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -128,7 +128,7 @@ fun SlippyMap(
     // plain holder (not snapshot state): written during draw, read by gesture handlers
     val sizeRef = remember { arrayOf(Size(1f, 1f)) }
     val tapHandler by rememberUpdatedState(onTap)
-    Box(modifier) {
+    Box(modifier.clipToBounds()) {
         Canvas(
             Modifier.matchParentSize()
                 .pointerInput(Unit) {
