@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- USB-serial chips common on Meshtastic boards -->
+<resources>
+    <usb-device vendor-id="4292" />   <!-- Silicon Labs CP210x (0x10C4) -->
+    <usb-device vendor-id="6790" />   <!-- WCH CH340/CH9102 (0x1A86) -->
+    <usb-device vendor-id="1027" />   <!-- FTDI (0x0403) -->
+    <usb-device vendor-id="12346" />  <!-- Espressif native USB (0x303A) -->
+    <usb-device vendor-id="9114" />   <!-- Adafruit / nRF52 boards (0x239A) -->
+    <usb-device vendor-id="6421" />   <!-- Nordic (0x1915) -->
+</resources>

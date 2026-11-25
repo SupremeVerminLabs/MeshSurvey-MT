@@ -1,0 +1,174 @@
+package meshsurvey.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
+import meshsurvey.core.export.Bundle
+import meshsurvey.core.export.Csv
+import meshsurvey.core.export.GeoJson
+import meshsurvey.core.radio.LinkKind
+import meshsurvey.core.radio.RadioLink
+import meshsurvey.core.radio.RadioState
+
+@Composable
+fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
+    val engine = model.engine
+    val platform = model.platform
+    val scope = rememberCoroutineScope()
+    val radio by engine.radioStatus.collectAsState()
+    var msg by remember { mutableStateOf<String?>(null) }
+    var manualLat by remember { mutableStateOf("") }
+    var manualLon by remember { mutableStateOf("") }
+    var manualAcc by remember { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var summaries by remember { mutableStateOf(engine.logger.config.storeSummaries) }
+
+
+    AlertDialog(onDismissRequest = onClose, confirmButton = { TextButton(onClick = onClose) { Text("Done") } },
+        title = { Text("Settings") },
+        text = {
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Section("Radio connection")
+                ConnectionSection(model)
+                msg?.let { Text(it, color = Color(0xFFC62828), fontSize = 12.sp) }
+
+                Section("Receiver position (GPS)")
+                Text(model.gpsStatus, fontSize = 13.sp)
+                platform.gpsOptions().forEach { g ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(g.label); g.note?.let { Text(it, fontSize = 11.sp, color = Color.DarkGray) }
+                        }
+                        Button(onClick = {
+                            val manual = if (g.needsManual) {
+                                val la = manualLat.toDoubleOrNull(); val lo = manualLon.toDoubleOrNull()
+                                if (la == null || lo == null) { msg = "Enter latitude and longitude"; return@Button }
+                                Triple(la, lo, manualAcc.toDoubleOrNull())
+                            } else null
+                            model.startGps(g, manual)
+                        }) { Text(if (model.gpsOption?.id == g.id) "Active" else "Use") }
+                    }
+                    if (g.needsManual) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(manualLat, { manualLat = it }, label = { Text("Lat") }, singleLine = true, modifier = Modifier.width(120.dp))
+                        OutlinedTextField(manualLon, { manualLon = it }, label = { Text("Lon") }, singleLine = true, modifier = Modifier.width(120.dp))
+                        OutlinedTextField(manualAcc, { manualAcc = it }, label = { Text("± m (optional)") }, singleLine = true, modifier = Modifier.width(130.dp))
+                    }
+                }
+                if (model.gpsOption != null) OutlinedButton(onClick = { model.stopGps() }) { Text("Stop GPS") }
+
+                Section("Background logging")
+                Text("While a radio is connected, logging continues with the screen locked (Android shows a notification). " +
+                    "Automated test sessions stop when the app leaves the screen.", fontSize = 12.sp)
+                OutlinedButton(onClick = { if (!platform.openBatterySettings()) msg = "Not needed on this platform" }) {
+                    Text("Battery settings (allow unrestricted background use)")
+                }
+
+                Section("Logging")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(summaries, { summaries = it; engine.setLoggerConfig(engine.logger.config.copy(storeSummaries = it)) })
+                    Text("  Store decoded summaries of non-text packets (telemetry, node info). Off by default. Text message contents are never stored.",
+                        fontSize = 12.sp)
+                }
+
+                Section("Map tiles")
+                OutlinedTextField(model.tiles.urlTemplate, { model.tiles.urlTemplate = it; model.tiles.clearMemory() },
+                    label = { Text("Tile URL template ({z}/{x}/{y}); file:// for a local tile folder") }, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(model.tiles.offlineOnly, { model.tiles.offlineOnly = it; model.tiles.clearMemory() })
+                    Text("  Offline only (use cached / local tiles, no network)", fontSize = 12.sp)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = {
+                        platform.pickMbtiles { path ->
+                            if (path == null) return@pickMbtiles
+                            val m = platform.openMbtiles(path)
+                            when {
+                                m == null -> msg = "Could not open $path as MBTiles"
+                                !m.isRaster -> { msg = m.describe(); m.close() }
+                                else -> {
+                                    model.tiles.urlTemplate = "mbtiles:$path#{z}/{x}/{y}"
+                                    model.tiles.attribution = m.attribution ?: m.name
+                                    model.tiles.clearMemory()
+                                    msg = "Using offline map: ${m.describe()}"
+                                    m.bounds?.let { b -> model.map.centerOn((b[1] + b[3]) / 2, (b[0] + b[2]) / 2, (m.minZoom ?: 10).toDouble().coerceAtLeast(10.0)) }
+                                    m.close()
+                                }
+                            }
+                        }
+                    }) { Text("Use MBTiles file…") }
+                    OutlinedButton(onClick = {
+                        model.tiles.urlTemplate = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        model.tiles.attribution = "© OpenStreetMap contributors"; model.tiles.clearMemory()
+                    }) { Text("Online OSM tiles") }
+                }
+                Text("Viewed online tiles are cached for offline use. Bulk downloading from tile.openstreetmap.org is not allowed by its usage policy. " +
+                    "For offline areas use a raster MBTiles file (PNG/JPEG/WebP; vector .pbf MBTiles are not supported), your own tile server, " +
+                    "or a local file:// {z}/{x}/{y} folder.", fontSize = 11.sp, color = Color.DarkGray)
+
+                Section("Data")
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = { platform.saveText("meshsurvey-observations.csv", "text/csv", Csv.observations(engine.store.observations())) { msg = it?.let { p -> "Saved $p" } } }) { Text("CSV") }
+                    OutlinedButton(onClick = { platform.saveText("meshsurvey-tests.csv", "text/csv", Csv.tests(engine.store.testTx())) { msg = it?.let { p -> "Saved $p" } } }) { Text("Tests CSV") }
+                    OutlinedButton(onClick = { platform.saveText("meshsurvey.geojson", "application/geo+json",
+                        GeoJson.export(engine.store.observations(), engine.store.track(), engine.store.testTx())) { msg = it?.let { p -> "Saved $p" } } }) { Text("GeoJSON") }
+                    OutlinedButton(onClick = { platform.saveText("meshsurvey-${engine.deviceId}.bundle.json", "application/json",
+                        Bundle.export(engine.store, engine.deviceId, engine.appVersion, engine.clock.wallMs())) { msg = it?.let { p -> "Saved $p" } } }) { Text("JSON bundle") }
+                }
+                OutlinedButton(onClick = { platform.openText { t -> if (t != null) {
+                    val r = Bundle.import(t, engine.store, engine.deviceId, engine.clock.wallMs())
+                    msg = r.error ?: if (r.duplicateFile) "Already imported" else "Imported ${r.observations} observations, ${r.track} track points, ${r.testTx} tests, ${r.testRx} test receptions"
+                } } }) { Text("Import JSON bundle…") }
+                if (!confirmDelete) TextButton(onClick = { confirmDelete = true }) { Text("Delete all logged data…", color = Color(0xFFC62828)) }
+                else Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Delete everything except registered devices?", modifier = Modifier.weight(1f), fontSize = 12.sp)
+                    TextButton(onClick = { engine.store.clearAll(); confirmDelete = false; msg = "All logged data deleted" }) { Text("Delete", color = Color(0xFFC62828)) }
+                    TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+                }
+
+                Section("About")
+                Text("MeshSurvey ${engine.edition} ${engine.appVersion} on ${platform.platformName} · device id ${engine.deviceId} · database schema v${engine.store.schemaVersion()}", fontSize = 12.sp)
+                Text("Passive by default: this app only transmits when you start a controlled test to a device you registered. " +
+                    "Map colours show measurements only; nothing is interpolated.", fontSize = 12.sp, color = Color.DarkGray)
+            }
+        })
+}
+
+@Composable
+private fun Section(t: String) {
+    HorizontalDivider(Modifier.padding(top = 6.dp))
+    Text(t, fontWeight = FontWeight.Bold)
+}
+
+/** Selects the simulated GPS when the simulated radio is connected and no GPS is active. */
+fun UiModel.gpsOptionsSim() { platform.gpsOptions().firstOrNull { it.id == SIM_GPS_ID }?.let { startGps(it) } }
+
+const val SIM_GPS_ID = "sim"
