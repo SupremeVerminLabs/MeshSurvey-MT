@@ -55,7 +55,7 @@ class AndroidSqlDriver private constructor(private val db: SQLiteDatabase) : Sql
         return db.rawQueryWithFactory({ _, driver, editTable, q ->
             sargs.forEachIndexed { i, a -> if (a == null) q.bindNull(i + 1) else bindTyped(q, i + 1, args[i]) }
             android.database.sqlite.SQLiteCursor(driver, editTable, q)
-        }, sql, null, null).use { c ->
+       sql, null, "").use { c ->
             val row = CursorRow(c)
             val out = ArrayList<T>()
             while (c.moveToNext()) out += map(row)
