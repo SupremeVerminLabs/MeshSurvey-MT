@@ -1,0 +1,97 @@
+name: build
+
+# Every push / pull request: run tests, build the Android APK and the Windows installer, smoke-test the
+# installed Windows app. Pushing a tag like v0.1.0 additionally publishes both files as a GitHub Release.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Tag builds use the tag (v0.1.0 -> 0.1.0); other builds use 0.1.<run number>.
+  APP_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.1.{0}', github.run_number) }}
+  APP_VERSION_CODE: ${{ github.run_number }}
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Core tests (real SQLite via sqlite-jdbc; includes the process-kill durability test)
+        run: bash ./gradlew :core:desktopTest --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: core-test-report, path: core/build/reports/tests/ }
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Android unit tests and installable APK
+        run: bash ./gradlew :core:testDebugUnitTest :androidApp:assembleRelease --stacktrace
+      - name: Name the APK
+        run: |
+          mkdir -p out
+          cp androidApp/build/outputs/apk/release/*.apk "out/MeshSurvey-Lite-${APP_VERSION#v}.apk"
+      - uses: actions/upload-artifact@v4
+        with: { name: MeshSurvey-Android-APK, path: out/*.apk }
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build Windows installer (bundles its own Java runtime)
+        shell: bash
+        run: bash ./gradlew :desktopApp:packageMsi --stacktrace
+      - name: Install silently, run the installed app's self-test without any system Java, uninstall
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem desktopApp/build/compose/binaries/main/msi/*.msi | Select-Object -First 1
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$($msi.FullName)`" /qn /l*v install.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 80; throw "MSI install failed: $($p.ExitCode)" }
+          $exe = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Filter MeshSurvey.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "MeshSurvey.exe not found after install" }
+          Write-Host "Installed at $($exe.FullName)"
+          # Prove no developer tools are needed: hide the runner's JDK from the app.
+          $env:JAVA_HOME = $null
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'java|jdk|temurin' }) -join ';'
+          $r = Start-Process $exe.FullName -ArgumentList "--self-test `"$PWD\selftest.json`"" -Wait -PassThru
+          Get-Content selftest.json
+          if ($r.ExitCode -ne 0) { throw "Installed app self-test failed: $($r.ExitCode)" }
+          $u = Start-Process msiexec.exe -ArgumentList "/x `"$($msi.FullName)`" /qn" -Wait -PassThru
+          if ($u.ExitCode -ne 0) { throw "Uninstall failed: $($u.ExitCode)" }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $msi.FullName "out/MeshSurvey-Lite-$($env:APP_VERSION.TrimStart('v')).msi"
+          Copy-Item selftest.json out/
+      - uses: actions/upload-artifact@v4
+        with: { name: MeshSurvey-Windows-Installer, path: out/* }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [core-tests, android, windows]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.apk
+            dist/*.msi
+            dist/selftest.json
+          body: |
+            MeshSurvey Lite ${{ github.ref_name }} — Android APK and Windows installer.
+            Hardware compatibility is NOT yet verified; see docs/HARDWARE_VALIDATION.md.
+            The APK is signed with a public test key (fine for sideloading, not for app stores).
