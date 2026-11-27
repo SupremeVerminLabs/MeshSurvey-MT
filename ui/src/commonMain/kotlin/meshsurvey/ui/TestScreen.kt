@@ -154,7 +154,7 @@ private fun SurveyRole(model: UiModel, ready: Boolean) {
                 FilterChip(ab.mode == DeliveryMode.ACKED, { err = engine.ab.setMode(DeliveryMode.ACKED) }, { Text("ACK requested") })
                 FilterChip(ab.mode == DeliveryMode.DIRECT_ONLY, { err = engine.ab.setMode(DeliveryMode.DIRECT_ONLY) }, { Text("Direct only (no relay, no ACK)") })
                 if (ab.mode == DeliveryMode.ACKED) Menu("Hop limit: ${ab.hopLimit ?: "radio default (${radio.info.hopLimit ?: "?"})"}",
-                     listOf<Pair<String, () -> Unit>>("Radio default" to { err = engine.ab.setMode(DeliveryMode.ACKED, null) }) +
+                    listOf<Pair<String, () -> Unit>>("Radio default" to { err = engine.ab.setMode(DeliveryMode.ACKED, null) }) +
                         (1..7).map { h -> "$h" to { err = engine.ab.setMode(DeliveryMode.ACKED, h) } })
             }
             Text(if (ab.mode == DeliveryMode.ACKED)

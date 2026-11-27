@@ -75,6 +75,10 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
     private var nonce: Long = 0
     private var lastHeartbeatMs = 0L
     private var lastRxMs = 0L
+    // Config download progress, shown to the user and used to retry a stalled handshake.
+    private var configItems = 0
+    private var configAttempts = 0
+    private var lastWantConfigMs = 0L
 
     fun addListener(l: RadioListener) { listeners += l }
     fun removeListener(l: RadioListener) { listeners -= l }
@@ -104,6 +108,15 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         val l = link ?: return
         l.tick()
         val now = clock.monotonicMs()
+        // Stalled handshake: nothing arriving for 15 s while waiting for config -> ask again (3 tries).
+        if (state == RadioState.DOWNLOADING_CONFIG && now - lastWantConfigMs > 20_000 && now - lastRxMs > 15_000) {
+            if (configAttempts >= 3) {
+                setState(RadioState.FAILED, "radio stopped sending its configuration ($configItems items received). " +
+                    "Close other apps connected to this radio and try again.")
+                return
+            }
+            requestConfig("no response, asking again")
+        }
         if (l.kind.isStream && state == RadioState.READY && now - lastHeartbeatMs > 300_000) {
             l.send(MeshProto.heartbeat())
             lastHeartbeatMs = now
@@ -130,9 +143,8 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         when (state) {
             LinkState.CONNECTING -> setState(RadioState.CONNECTING, detail)
             LinkState.CONNECTED -> {
-                nonce = random.nextLong(1, 0x7fffffffL)
-                setState(RadioState.DOWNLOADING_CONFIG, detail)
-                link?.send(MeshProto.wantConfig(nonce))
+                configAttempts = 0
+                requestConfig("connected; requesting configuration")
                 lastHeartbeatMs = clock.monotonicMs()
             }
             LinkState.DISCONNECTED -> setState(RadioState.DISCONNECTED, detail)
@@ -144,6 +156,10 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
 
     override fun onFromRadio(bytes: ByteArray) {
         lastRxMs = clock.monotonicMs()
+        if (state == RadioState.DOWNLOADING_CONFIG) {
+            configItems++
+            if (configItems == 1 || configItems % 10 == 0) setState(RadioState.DOWNLOADING_CONFIG, "$configItems items received")
+        }
         val msg = try { MeshProto.decodeFromRadio(bytes) } catch (e: Exception) {
             listeners.forEach { it.onDebugText("undecodable FromRadio (${bytes.size} B): ${e.message}") }
             return
@@ -154,7 +170,8 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
             is FromRadioMsg.LoraConfig -> updateInfo(applyLora(msg.cfg))
             is FromRadioMsg.Metadata -> updateInfo(applyMeta(msg.meta))
             is FromRadioMsg.Channel -> if (msg.role == 1) updateInfo(info.copy(primaryChannelName = msg.name))
-            is FromRadioMsg.ConfigComplete -> if (msg.nonce == nonce) setState(RadioState.READY, "config received")
+            is FromRadioMsg.ConfigComplete -> if (msg.nonce == nonce) setState(RadioState.READY, "config received ($configItems items)")
+                else listeners.forEach { it.onDebugText("ignored config_complete_id ${msg.nonce} (waiting for $nonce)") }
             is FromRadioMsg.Packet -> {
                 val rx = ReceivedPacket(msg.packet, clock.wallMs(), clock.monotonicMs(), state != RadioState.READY)
                 learnFromPacket(msg.packet)
@@ -162,9 +179,8 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
             }
             is FromRadioMsg.Rebooted -> {
                 // Node rebooted: re-request config on the same link.
-                nonce = random.nextLong(1, 0x7fffffffL)
-                setState(RadioState.DOWNLOADING_CONFIG, "radio rebooted")
-                link?.send(MeshProto.wantConfig(nonce))
+                configAttempts = 0
+                requestConfig("radio rebooted")
             }
             is FromRadioMsg.Log -> listeners.forEach { it.onDebugText(msg.text) }
             is FromRadioMsg.QueueStatus -> listeners.forEach { it.onQueueStatus(msg.res, msg.free, msg.maxLen, msg.meshPacketId) }
@@ -200,9 +216,18 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
 
     /** Re-requests the full config (used to confirm a configuration change). */
     fun refreshConfig() {
+        if (link == null) return
+        configAttempts = 0
+        requestConfig("re-reading configuration")
+    }
+
+    private fun requestConfig(detail: String) {
         val l = link ?: return
         nonce = random.nextLong(1, 0x7fffffffL)
-        setState(RadioState.DOWNLOADING_CONFIG, "re-reading configuration")
+        configItems = 0
+        configAttempts++
+        lastWantConfigMs = clock.monotonicMs()
+        setState(RadioState.DOWNLOADING_CONFIG, if (configAttempts > 1) "$detail (try $configAttempts of 3)" else detail)
         l.send(MeshProto.wantConfig(nonce))
     }
 

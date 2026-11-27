@@ -38,6 +38,26 @@ object SelfTest {
             val img = org.jetbrains.skia.Image.makeFromEncoded(png)
             "${img.width}x${img.height}"
         }
+        // Windows: the bundled Bluetooth helper starts without extra runtimes and answers.
+        // (CI runners have no Bluetooth adapter, so "adapter none" is the expected answer there.)
+        if (WindowsBle.command() == null && !System.getProperty("os.name").orEmpty().startsWith("Windows")) {
+            results["ble_helper"] = "SKIP: not Windows"
+        } else check("ble_helper") {
+            val cmd = WindowsBle.command() ?: error(WindowsBle.unavailableReason())
+            val q = java.util.concurrent.LinkedBlockingQueue<String>()
+            val h = meshsurvey.core.radio.BleHelperProcess(cmd, { q.put(it) }, { q.put("__exit $it") })
+            try {
+                h.send("adapter")
+                var answer: String? = null
+                val end = System.currentTimeMillis() + 15_000
+                while (answer == null && System.currentTimeMillis() < end) {
+                    val l = q.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+                    if (l.startsWith("adapter") || l.startsWith("error") || l.startsWith("__exit")) answer = l
+                }
+                require(answer != null && answer.startsWith("adapter")) { "helper did not answer (${answer ?: "timeout"})" }
+                "helper runs; $answer"
+            } finally { h.close() }
+        }
         check("simulated_survey") {
             val clock = ManualClock()
             val world = SimWorld(seed = 9)
@@ -62,7 +82,7 @@ object SelfTest {
             require(File(dir, "backups").listFiles()!!.isNotEmpty()) { "no backup file" }
             "$obs observations, ${tx.size} tests, preset change + restore confirmed (SIMULATED)"
         }
-        val ok = results.values.all { it.startsWith("PASS") }
+        val ok = results.values.all { it.startsWith("PASS") || it.startsWith("SKIP") }
         val json = buildString {
             append("{\n  \"meshsurvey_selftest\": \"${if (ok) "PASS" else "FAIL"}\",\n  \"version\": \"$APP_VERSION\",\n")
             append(results.entries.joinToString(",\n") { (k, v) -> "  \"$k\": \"${v.replace("\\", "\\\\").replace("\"", "'")}\"" })

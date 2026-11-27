@@ -82,6 +82,14 @@ USB GPS receiver with NMEA output.
 | HV-51 | Raster MBTiles (PNG and JPEG) displays correctly aligned (TMS flip) on Windows and Android | Screenshot over a known landmark |
 | HV-52 | Vector MBTiles is refused with a clear message | Screenshot |
 
+## G. Bluetooth (Windows helper; Android fix)
+| ID | Check | Evidence |
+|---|---|---|
+| HV-60 | Windows: Connect → Search again lists the radio by name (and "paired" if Windows already paired it); with Bluetooth off, the reason is shown instead | Screenshot of both states |
+| HV-61 | Windows: first connection with the correct PIN pairs and connects; a wrong PIN fails with the PIN hint; the radio appears in Windows' Bluetooth list afterwards | Screenshots |
+| HV-62 | Windows: status reaches "Logging"; packets appear in Monitor with RSSI/SNR matching the official app within a few dB; switching the radio off shows "link lost" and reconnects when it returns; no test is resumed automatically | Screenshot + export |
+| HV-63 | Android: a radio that previously stalled at "Syncing…" (T-Echo) now shows "N items received" and reaches "Logging", or fails with the 3-try message instead of hanging | Screenshot of the status line |
+
 ## Results table
 | ID | Date | Firmware | Hardware | Transport/OS | Result (pass/fail/n.a.) | Evidence link | Notes |
 |---|---|---|---|---|---|---|---|

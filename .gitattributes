@@ -1,0 +1,10 @@
+# Uploads from Windows must not break the Linux build: keep shell scripts LF, batch files CRLF,
+# and never touch binary files.
+* text=auto
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.keystore binary
+*.png binary
+*.mbtiles binary

@@ -30,5 +30,6 @@ x.y, date, report link)" only after the matching hardware checks pass.
 | Platform | Minimum | Transports |
 |---|---|---|
 | Android | 8.0 (API 26) | BLE, USB-OTG serial, TCP |
-| Windows / macOS / Linux | JDK 17 runtime (bundled in native packages) | USB serial, TCP. BLE unavailable on desktop |
+| Windows 10/11 | Bundled Java runtime (MSI) | USB serial, TCP, BLE (BLE: implemented, unverified) |
+| macOS / Linux | JDK 17 (no packaged build) | USB serial, TCP. No BLE |
 | iOS | Not supported (possible future KMP target) | |

@@ -17,6 +17,8 @@ data class ConnectionOption(
     val available: Boolean = true,
     val note: String? = null,
     val needsHost: Boolean = false,
+    /** Windows Bluetooth: Windows needs the radio's PIN to pair (Android shows its own pairing dialog). */
+    val needsPin: Boolean = false,
 )
 
 data class GpsOption(val id: String, val label: String, val needsManual: Boolean = false, val note: String? = null)
@@ -27,6 +29,7 @@ interface PlatformServices {
     /** May take a few seconds (BLE scan). Must include unavailable options with a [ConnectionOption.note] explaining why. */
     suspend fun discoverConnections(): List<ConnectionOption>
     /** Creates (does not start) a link. Throws with a user-readable message on failure. */
+    /** [host] is the TCP host for network options, or the pairing PIN for options with [ConnectionOption.needsPin]. */
     fun openLink(option: ConnectionOption, host: String?): RadioLink
     fun gpsOptions(): List<GpsOption>
     fun startGps(option: GpsOption, manual: Triple<Double, Double, Double?>?, onFix: (Fix) -> Unit, onStatus: (String) -> Unit)

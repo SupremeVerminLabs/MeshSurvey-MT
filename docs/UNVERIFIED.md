@@ -72,3 +72,8 @@ Everything below is not yet verified. Each item names the check that closes it.
 | U-57 | Android `Location.isMock` / `isFromMockProvider` detects mock providers | HV-20b |
 | U-58 | `synchronous=FULL` + WAL makes committed rows survive power loss on the tested devices | HV-19c, HV-40c (reboot) |
 | U-59 | Atomic rename (ATOMIC_MOVE) is supported on the app's storage (falls back to plain replace) | HV-40c |
+| U-60 | Windows BLE helper (C++/WinRT) compiles with the runner's Visual Studio + Windows SDK and runs without a VC++ redistributable | CI build + installed-app self-test (`ble_helper`) |
+| U-61 | Windows finds Meshtastic radios by their advertised service UUID during an active scan, and lists already-paired radios | HV-60 |
+| U-62 | Custom pairing with a PIN (`DeviceInformationCustomPairing`, ProvidePin) works for Meshtastic radios from a desktop (non-packaged) app | HV-61 |
+| U-63 | WinRT GATT: FromNum notifications arrive, FromRadio reads return one message each and empty when drained, ToRadio write-with-response works | HV-62 |
+| U-64 | Android BLE handshake now completes on radios that previously stalled at "Syncing…" (polling + retry fix) | HV-63 (T-Echo), HV-10 (RAK4631) |

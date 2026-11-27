@@ -8,6 +8,9 @@ import meshsurvey.core.map.MbTiles
 import meshsurvey.core.store.JdbcSqlDriver
 import meshsurvey.core.model.Fix
 import meshsurvey.core.model.FixSource
+import meshsurvey.core.radio.BleHelperScan
+import meshsurvey.core.radio.BleScanResult
+import meshsurvey.core.radio.HelperBleLink
 import meshsurvey.core.radio.LinkKind
 import meshsurvey.core.radio.RadioLink
 import meshsurvey.core.radio.StreamLinkBase
@@ -45,8 +48,7 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
             note = "Plug the radio in with a data-capable USB cable; on Linux add yourself to the 'dialout' group.")
         list += ConnectionOption("tcp", LinkKind.TCP, "Network node (enter host above)", needsHost = true,
             note = "Nodes with Wi-Fi/Ethernet expose the API on TCP port 4403.")
-        list += ConnectionOption("ble", LinkKind.BLE, "Bluetooth LE", available = false,
-            note = "Not available on desktop in this release: there is no maintained cross-platform BLE library for the JVM. Use USB or TCP.")
+        list += bluetoothOptions()
         list += ConnectionOption("sim", LinkKind.SIMULATED, "Simulated radio (development only, data marked SIMULATED)")
         list
     }
@@ -58,7 +60,28 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
             val (hn, port) = h.split(":").let { it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 4403) }
             TcpLink(hn, port, post)
         }
+        LinkKind.BLE -> {
+            val cmd = WindowsBle.command() ?: throw IllegalArgumentException(WindowsBle.unavailableReason())
+            HelperBleLink(cmd, option.id.removePrefix("ble:"), option.label.substringBefore(" ("), host?.trim()?.ifEmpty { null }, post)
+        }
         else -> throw IllegalArgumentException("${option.kind.label} is not supported on desktop")
+    }
+
+    /** Windows only: lists Meshtastic radios found by a short Bluetooth scan through the helper. */
+    private fun bluetoothOptions(): List<ConnectionOption> {
+        val cmd = WindowsBle.command()
+            ?: return listOf(ConnectionOption("ble", LinkKind.BLE, "Bluetooth LE", available = false, note = WindowsBle.unavailableReason()))
+        return when (val r = BleHelperScan.scan(cmd, seconds = 5)) {
+            is BleScanResult.Unavailable -> listOf(ConnectionOption("ble", LinkKind.BLE, "Bluetooth LE", available = false, note = r.reason))
+            is BleScanResult.Found ->
+                if (r.devices.isEmpty()) listOf(ConnectionOption("ble", LinkKind.BLE, "No Meshtastic radios found", available = false,
+                    note = "Make sure the radio is on, nearby, and not connected to another phone or app (a radio accepts one Bluetooth connection at a time)."))
+                else r.devices.map { d ->
+                    val extra = listOfNotNull(d.rssi?.let { "$it dBm" }, if (d.paired) "paired" else null).joinToString(", ")
+                    ConnectionOption("ble:${d.address}", LinkKind.BLE, "${d.name} (${d.address}${if (extra.isEmpty()) "" else ", $extra"})",
+                        needsPin = true, note = "Windows Bluetooth: implemented, not yet verified with a real radio.")
+                }
+        }
     }
 
     override fun openBatterySettings(): Boolean = false

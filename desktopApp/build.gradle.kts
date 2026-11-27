@@ -25,6 +25,9 @@ compose.desktop {
         jvmArgs += listOf("-Dmeshsurvey.version=$appVersion")
         nativeDistributions {
             targetFormats(TargetFormat.Msi)
+            // resources/windows/meshsurvey-ble.exe (Windows Bluetooth helper) is built by CI from native/windows-ble
+            // before packaging. Without it the app still works; Bluetooth is then reported as unavailable.
+            appResourcesRootDir.set(project.layout.projectDirectory.dir("resources"))
             packageName = "MeshSurvey"
             packageVersion = appVersion
             description = "Passive RF survey and A/B link testing for Meshtastic"

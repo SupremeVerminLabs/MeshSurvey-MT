@@ -30,6 +30,7 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -46,36 +47,58 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
+      - name: Build Windows Bluetooth helper (C++/WinRT, static runtime)
+        shell: pwsh
+        run: ./desktopApp/native/windows-ble/build.ps1
       - name: Build Windows installer (bundles its own Java runtime)
         shell: bash
         run: bash ./gradlew :desktopApp:packageMsi --stacktrace
-      - name: Install silently, run the installed app's self-test without any system Java, uninstall
+      - name: Collect the installer
         shell: pwsh
         run: |
           $msi = Get-ChildItem desktopApp/build/compose/binaries/main/msi/*.msi | Select-Object -First 1
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $msi.FullName "out/MeshSurvey-Lite-$($env:APP_VERSION.TrimStart('v')).msi"
+      # Uploaded before the smoke test, so the installer can be downloaded even if the test fails.
+      - uses: actions/upload-artifact@v4
+        with: { name: MeshSurvey-Windows-Installer, path: out/*.msi }
+      - name: Install silently, run the installed app's self-test without any system Java, uninstall
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $msi = Get-ChildItem out/*.msi | Select-Object -First 1
+          Write-Host "Installing $($msi.Name)"
           $p = Start-Process msiexec.exe -ArgumentList "/i `"$($msi.FullName)`" /qn /l*v install.log" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 80; throw "MSI install failed: $($p.ExitCode)" }
-          $exe = Get-ChildItem -Path $env:LOCALAPPDATA, $env:ProgramFiles -Recurse -Filter MeshSurvey.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $exe) { throw "MeshSurvey.exe not found after install" }
+          # Per-user install goes to %LOCALAPPDATA%\MeshSurvey; only search likely folders (searching all of Program Files takes ages).
+          $roots = @("$env:LOCALAPPDATA\MeshSurvey", "$env:LOCALAPPDATA\Programs\MeshSurvey", "$env:ProgramFiles\MeshSurvey") | Where-Object { Test-Path $_ }
+          Write-Host "Searching: $roots"
+          $exe = $roots | ForEach-Object { Get-ChildItem -Path $_ -Recurse -Filter MeshSurvey.exe -ErrorAction SilentlyContinue } | Select-Object -First 1
+          if (-not $exe) { Get-Content install.log -Tail 80; throw "MeshSurvey.exe not found after install" }
           Write-Host "Installed at $($exe.FullName)"
           # Prove no developer tools are needed: hide the runner's JDK from the app.
           $env:JAVA_HOME = $null
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'java|jdk|temurin' }) -join ';'
-          $r = Start-Process $exe.FullName -ArgumentList "--self-test `"$PWD\selftest.json`"" -Wait -PassThru
-          Get-Content selftest.json
+          Write-Host "Running self-test (max 5 min)"
+          $r = Start-Process $exe.FullName -ArgumentList "--self-test `"$PWD\selftest.json`"" -PassThru
+          if (-not $r.WaitForExit(300000)) {
+            Stop-Process -Id $r.Id -Force -ErrorAction SilentlyContinue
+            if (Test-Path selftest.json) { Get-Content selftest.json }
+            throw "Self-test did not finish within 5 minutes"
+          }
+          if (Test-Path selftest.json) { Get-Content selftest.json } else { Write-Host "No selftest.json written" }
           if ($r.ExitCode -ne 0) { throw "Installed app self-test failed: $($r.ExitCode)" }
           $u = Start-Process msiexec.exe -ArgumentList "/x `"$($msi.FullName)`" /qn" -Wait -PassThru
           if ($u.ExitCode -ne 0) { throw "Uninstall failed: $($u.ExitCode)" }
-          New-Item -ItemType Directory -Force out | Out-Null
-          Copy-Item $msi.FullName "out/MeshSurvey-Lite-$($env:APP_VERSION.TrimStart('v')).msi"
-          Copy-Item selftest.json out/
       - uses: actions/upload-artifact@v4
-        with: { name: MeshSurvey-Windows-Installer, path: out/* }
+        if: always()
+        with: { name: windows-self-test-report, path: "selftest.json", if-no-files-found: ignore }
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

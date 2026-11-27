@@ -25,6 +25,16 @@ fun main(args: Array<String>) {
     if (st >= 0) exitProcess(SelfTest.run(File(args.getOrNull(st + 1) ?: "meshsurvey-selftest.json")))
 
     val home = File(System.getProperty("meshsurvey.home") ?: (System.getProperty("user.home") + File.separator + ".meshsurvey")).apply { mkdirs() }
+    // The Windows launcher has no console, so write any crash to a file the user can send us.
+    val crashLog = File(home, "crash.log")
+    fun logCrash(where: String, e: Throwable) = runCatching {
+        crashLog.appendText("=== ${java.time.Instant.now()} MeshSurvey $APP_VERSION ($where) ===\n${e.stackTraceToString()}\n")
+    }
+    Thread.setDefaultUncaughtExceptionHandler { t, e -> logCrash("thread ${t.name}", e) }
+    try { runApp(home) } catch (e: Throwable) { logCrash("startup", e); throw e }
+}
+
+private fun runApp(home: File) {
     val store = SqlStore(JdbcSqlDriver("jdbc:sqlite:" + File(home, "meshsurvey.db").absolutePath))
     val engine = SurveyEngine(store, JvmClock(), Edition.LITE, APP_VERSION,
         configBackups = FileBackupStore(File(home, "preset-backups")))

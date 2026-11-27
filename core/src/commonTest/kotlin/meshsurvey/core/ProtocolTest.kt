@@ -134,6 +134,27 @@ class ProtocolTest {
         override fun close() {}
     }
 
+    @Test fun stalledHandshakeIsRetriedThenFails() {
+        val clock = ManualClock()
+        val rc = RadioClient(clock)
+        val link = FakeLink()
+        rc.connect(link)
+        assertEquals(1, link.sent.size)
+        clock.advance(21_000); rc.tick()
+        assertEquals(2, link.sent.size)               // second want_config
+        assertEquals(RadioState.DOWNLOADING_CONFIG, rc.state)
+        clock.advance(21_000); rc.tick()
+        assertEquals(3, link.sent.size)
+        clock.advance(21_000); rc.tick()
+        assertEquals(RadioState.FAILED, rc.state)      // gave up after 3 requests
+        // progress resets and a late, matching completion is still accepted on a fresh request
+        val rc2 = RadioClient(clock); val l2 = FakeLink(); rc2.connect(l2)
+        val n2 = Wire.parse(l2.sent.last()).f(3)!!.u32
+        l2.listener!!.onFromRadio(FromRadioEncoder.myInfo(1))
+        l2.listener!!.onFromRadio(FromRadioEncoder.configComplete(n2))
+        assertEquals(RadioState.READY, rc2.state)
+    }
+
     @Test fun handshakeReachesReadyOnlyWithMatchingNonce() {
         val clock = ManualClock()
         val rc = RadioClient(clock)

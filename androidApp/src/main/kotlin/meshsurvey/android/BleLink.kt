@@ -47,13 +47,36 @@ class BleLink(private val ctx: Context, private val address: String, private val
     private val queue = ArrayDeque<Op>()
     private var busy = false
     private var readPending = false
+    private var lastReadMs = 0L
+    private var connectAttempts = 0
 
     override fun start(listener: RadioLink.Listener) {
         this.listener = listener
         listener.onLinkState(LinkState.CONNECTING, description)
         val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         if (adapter == null || !adapter.isEnabled) { listener.onLinkState(LinkState.FAILED, "Bluetooth is off"); return }
+        connectGatt()
+    }
+
+    private fun connectGatt() {
+        connectAttempts++
+        val adapter = (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter ?: return
         gatt = adapter.getRemoteDevice(address).connectGatt(ctx, false, cb, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    /**
+     * Called about once per second. Polls FromRadio when idle, in case FromNum notifications
+     * are not delivered (seen on some phones / bonding states); an empty read costs very little.
+     */
+    override fun tick() {
+        if (closed || fromRadio == null || busy || queue.isNotEmpty()) return
+        if (android.os.SystemClock.elapsedRealtime() - lastReadMs > 2000) enqueue(Op.Read)
+    }
+
+    private fun deliver(value: ByteArray) {
+        try { listener?.onFromRadio(value) } catch (e: Exception) {
+            listener?.onDebugText("error handling data from radio: ${e.message}")
+        }
     }
 
     override fun send(toRadio: ByteArray): Boolean {
@@ -81,7 +104,7 @@ class BleLink(private val ctx: Context, private val address: String, private val
         busy = true
         val ok = when (op) {
             is Op.Write -> write(g, toRadio!!, op.b)
-            Op.Read -> { readPending = false; g.readCharacteristic(fromRadio) }
+            Op.Read -> { readPending = false; lastReadMs = android.os.SystemClock.elapsedRealtime(); g.readCharacteristic(fromRadio) }
             Op.Subscribe -> subscribe(g)
         }
         if (!ok) { busy = false; h.postDelayed({ if (op is Op.Read) enqueue(Op.Read) else { queue.addFirst(op); pump() } }, 300) }
@@ -108,7 +131,7 @@ class BleLink(private val ctx: Context, private val address: String, private val
             listener?.onLinkState(LinkState.FAILED, "Read failed ($status) — pair the node in Android Bluetooth settings (default PIN 123456)")
             done(); return
         }
-        if (value.isNotEmpty()) { listener?.onFromRadio(value); enqueue(Op.Read) }
+        if (value.isNotEmpty()) { deliver(value); enqueue(Op.Read) }
         done()
     }
 
@@ -117,6 +140,12 @@ class BleLink(private val ctx: Context, private val address: String, private val
             if (g != gatt) return@post
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 if (!g.requestMtu(512)) g.discoverServices()
+            } else if (!closed && !connectedSignalled && connectAttempts < 3) {
+                // Status 133 and similar first-connection failures are common on Android: retry quietly.
+                listener?.onDebugText("Bluetooth connect failed ($status), retrying (${connectAttempts + 1} of 3)")
+                try { g.close() } catch (_: Exception) {}
+                gatt = null
+                h.postDelayed({ if (!closed) connectGatt() }, 1500)
             } else if (!closed) {
                 listener?.onLinkState(if (connectedSignalled) LinkState.DISCONNECTED else LinkState.FAILED, "Bluetooth link lost ($status)")
                 try { g.close() } catch (_: Exception) {}

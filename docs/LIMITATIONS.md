@@ -21,7 +21,7 @@
   expect small compile fixes. See [UNVERIFIED.md](UNVERIFIED.md).
 * **No hardware testing yet** (see COMPATIBILITY.md). The A/B flow is verified with two simulated
   engines exchanging real bundle files, not over RF.
-* Desktop has no BLE.
+* Desktop BLE is Windows-only (through the bundled `meshsurvey-ble.exe` helper) and has not yet been tested with a real radio. macOS/Linux desktop builds have no BLE.
 * NMEA GPS accuracy is only known if the receiver sends `$GxGST`; otherwise it is recorded as
   unknown (HDOP is not converted to metres).
 * MBTiles: raster only (vector `.pbf` refused). On Android the file is copied into app storage.

@@ -42,6 +42,7 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
     var options by remember { mutableStateOf<List<ConnectionOption>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
     var host by remember { mutableStateOf("meshtastic.local") }
+    var pin by remember { mutableStateOf("123456") }
     var msg by remember { mutableStateOf<String?>(null) }
 
     fun scan() {
@@ -60,7 +61,11 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
             OutlinedButton(onClick = { scan() }, enabled = !scanning) { Text(if (scanning) "Searching…" else "Search again") }
             if (options.any { it.needsHost }) OutlinedTextField(host, { host = it }, label = { Text("Network node host (TCP)") }, singleLine = true,
                 modifier = Modifier.width(220.dp))
+            if (options.any { it.needsPin }) OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(6) },
+                label = { Text("Bluetooth PIN") }, singleLine = true, modifier = Modifier.width(150.dp))
         }
+        if (options.any { it.needsPin }) Text("PIN is only needed the first time Windows pairs with a radio: radios with a screen show it; " +
+            "screenless radios such as the RAK4631 use 123456 unless changed.", fontSize = 11.sp, color = Color.DarkGray)
         options.forEach { o ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -69,7 +74,7 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
                 }
                 Button(enabled = o.available && !wanted, onClick = {
                     try {
-                        val h = host
+                        val h = if (o.needsPin) pin else host
                         val peer = model.peerSendsTests
                         val simFactory: () -> RadioLink = {
                             SimSupport.link(engine.clock, { engine.fix.value }, peer, { engine.referenceState.value.session?.refCode })

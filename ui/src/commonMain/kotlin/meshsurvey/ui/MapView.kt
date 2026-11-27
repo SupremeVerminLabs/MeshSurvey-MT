@@ -129,7 +129,7 @@ fun SlippyMap(
     // plain holder (not snapshot state): written during draw, read by gesture handlers
     val sizeRef = remember { arrayOf(Size(1f, 1f)) }
     val tapHandler by rememberUpdatedState(onTap)
-    Box(modifier.clipToBounds()) {
+    Box(modifier.clipToBounds()) {  // tiles and overlays must not draw over the filter bar or panels
         Canvas(
             Modifier.matchParentSize()
                 .pointerInput(Unit) {
