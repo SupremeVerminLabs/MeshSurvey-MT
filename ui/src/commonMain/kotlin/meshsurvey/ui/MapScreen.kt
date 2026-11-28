@@ -58,6 +58,7 @@ import meshsurvey.core.map.PredictionMap
 import meshsurvey.core.model.KnownNode
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.ui.geometry.Offset
@@ -286,9 +287,11 @@ fun MapScreen(model: UiModel) {
                     }
                 })
             Column(Modifier.align(Alignment.TopEnd).padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(onClick = { model.map.zoom = (model.map.zoom + 1).coerceAtMost(19.0) }) { Text("+") }
-                Button(onClick = { model.map.zoom = (model.map.zoom - 1).coerceAtLeast(2.0) }) { Text("−") }
-                Button(onClick = { fix?.let { model.map.centerOn(it.lat, it.lon, maxOf(model.map.zoom, 15.0)) } }) { Text("◎") }
+                val zp = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                val zm = Modifier.size(44.dp)
+                Button(onClick = { model.map.zoom = (model.map.zoom + 1).coerceAtMost(19.0) }, zm, contentPadding = zp) { Text("+", fontSize = 18.sp) }
+                Button(onClick = { model.map.zoom = (model.map.zoom - 1).coerceAtLeast(2.0) }, zm, contentPadding = zp) { Text("−", fontSize = 18.sp) }
+                Button(onClick = { fix?.let { model.map.centerOn(it.lat, it.lon, maxOf(model.map.zoom, 15.0)) } }, zm, contentPadding = zp) { Text("◎", fontSize = 16.sp) }
             }
             val compact = LocalCompact.current
             var legend by remember(compact, f.predictionId) { mutableStateOf(!compact && f.predictionId == null) }
@@ -299,7 +302,7 @@ fun MapScreen(model: UiModel) {
                     Text(if (legend) "Hide legend" else "Legend", fontSize = 12.sp)
                 }
             }
-            data?.let { d -> if (d.pred != null) PredictionCard(model, d, Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 72.dp)) }
+            data?.let { d -> if (d.pred != null) PredictionCard(model, d, Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 60.dp)) }
             Text(model.tiles.attribution, fontSize = 10.sp, color = Color(0xFF222222), modifier = Modifier.align(Alignment.BottomEnd)
                 .background(Color(0xCCFFFFFF)).padding(horizontal = 4.dp))
         }

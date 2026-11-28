@@ -3,6 +3,22 @@
 Verification status keys: **Implemented** · **Compiled** (by a real compiler; says where) · **Simulator tested** ·
 **Integration tested** · **Hardware tested** (physical radio; says which) · **Unverified**.
 
+## Unreleased: Dark theme, phone-width layout, map crash fix, 2026-11-27
+
+**Compiled and rendered by CI (screens job, simulated data); not yet checked on a real phone.**
+
+* **Crash fix:** zooming the map could close the app ("maxWidth must be >= minWidth"): node labels near the right edge were drawn
+  with a negative width limit. Labels are now measured first and drawn only where they fit; any future drawing error in a map
+  layer is written to the event log and that layer skipped for the frame instead of closing the app.
+* **Dark theme by default**; Light and System in Settings → Appearance (stored). Text colours chosen for ≥ 4.5:1 contrast; SNR
+  badges pick black or white text by background.
+* **Phone-width layout below 600 dp:** top-bar chips wrap, idle radio chip hidden, Monitor shows a compact column set (time, from,
+  type, RSSI, SNR, hops) and a collapsible status card, wide tables scroll sideways instead of running off screen, map controls
+  regrouped (Layers menu, Filters dialog), legend and prediction summary collapsible.
+* **Prediction cells** with no reception are drawn as outlines (weak evidence).
+* **Sessions…** in Settings: list of recent sessions with per-session delete (active session refused).
+* CI **screens** job renders the real UI (phone/desktop, dark/light) with simulated data on every push.
+
 ## Unreleased: Coverage prediction vs measurement, 2026-11-27
 
 **Implemented, unit tested (136 local tests); compiled by CI; not yet tried with a real Site Planner export.**
