@@ -326,6 +326,25 @@ class SqlStore(private val db: SqlDriver) : Store {
             meshsurvey.core.model.KnownNode(r.string(0)!!, r.string(1)!!, r.string(2), r.string(3), r.double(4), r.double(5), r.long(6)!!, r.string(7)!!)
         }
 
+    // ---------------- per-session management ----------------
+
+    /** Reception counts per session (for the session list). */
+    fun observationCountsBySession(): Map<String, Int> =
+        db.query("SELECT session_id, COUNT(*) FROM observation WHERE session_id IS NOT NULL GROUP BY session_id") { r -> r.string(0)!! to (r.int(1) ?: 0) }.toMap()
+
+    /**
+     * Deletes one survey session with its receptions and track points (own or imported). An active session is refused
+     * (end it by disconnecting first). Returns false if nothing was deleted.
+     */
+    fun deleteSession(id: String): Boolean = db.transaction {
+        val active = db.query("SELECT COUNT(*) FROM survey_session WHERE id=? AND status='ACTIVE' AND origin_device=''", listOf(id)) { it.int(0) ?: 0 }.first()
+        if (active > 0) return@transaction false
+        db.execute("DELETE FROM observation WHERE session_id=?", listOf(id))
+        db.execute("DELETE FROM track_point WHERE session_id=?", listOf(id))
+        db.execute("DELETE FROM clock_event WHERE session_id=?", listOf(id))
+        db.execute("DELETE FROM survey_session WHERE id=?", listOf(id)) > 0
+    }
+
     // ---------------- coverage predictions ----------------
 
     data class StoredPrediction(val id: Long, val name: String, val fileName: String?, val importedMs: Long, val target: String?)

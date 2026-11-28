@@ -176,6 +176,7 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                     val r = Bundle.import(t, engine.store, engine.deviceId, engine.clock.wallMs())
                     msg = r.error ?: if (r.duplicateFile) "Already imported" else "Imported ${r.observations} observations, ${r.track} track points, ${r.testTx} tests, ${r.testRx} test receptions"
                 } } }) { Text("Import JSON bundle…") }
+                SessionList(model)
                 if (!confirmDelete) TextButton(onClick = { confirmDelete = true }) { Text("Delete all logged data…", color = Pal.bad) }
                 else Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Delete everything except registered devices?", modifier = Modifier.weight(1f), fontSize = 12.sp)
@@ -201,3 +202,32 @@ private fun Section(t: String) {
 fun UiModel.gpsOptionsSim() { platform.gpsOptions().firstOrNull { it.id == SIM_GPS_ID }?.let { startGps(it) } }
 
 const val SIM_GPS_ID = "sim"
+
+/** Recent survey sessions of the shown radio's database, each deletable on its own (with confirmation). */
+@Composable
+private fun SessionList(model: UiModel) {
+    val store = model.engine.store
+    var open by remember { mutableStateOf(false) }
+    var version by remember { mutableStateOf(0) }
+    var confirm by remember { mutableStateOf<String?>(null) }
+    TextButton(onClick = { open = !open }) { Text(if (open) "Hide sessions" else "Sessions…") }
+    if (!open) return
+    val sessions = remember(version) { store.sessions().take(30) }
+    val counts = remember(version) { store.observationCountsBySession() }
+    if (sessions.isEmpty()) Text("No sessions yet.", fontSize = 12.sp, color = Pal.muted)
+    sessions.forEach { s ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("${model.platform.formatDateTime(s.startedMs)} · ${s.preset ?: "?"} · ${counts[s.id] ?: 0} receptions", fontSize = 12.sp)
+                Text(listOfNotNull(s.receiverNode?.let { meshsurvey.core.proto.MeshEnums.nodeId(it) }, s.protocol.takeIf { it != "meshtastic" },
+                    s.status.name.lowercase(), s.originDevice?.let { "imported from $it" }, if (s.source == meshsurvey.core.model.Source.SIMULATED) "SIMULATED" else null)
+                    .joinToString(" · "), fontSize = 11.sp, color = Pal.muted)
+            }
+            if (s.status == meshsurvey.core.model.SessionStatus.ACTIVE && s.originDevice == null) Text("logging", fontSize = 11.sp, color = Pal.ok)
+            else if (confirm == s.id) {
+                TextButton(onClick = { store.deleteSession(s.id); confirm = null; version++ }) { Text("Delete", color = Pal.bad) }
+                TextButton(onClick = { confirm = null }) { Text("Keep") }
+            } else TextButton(onClick = { confirm = s.id }) { Text("Delete…", color = Pal.bad) }
+        }
+    }
+}

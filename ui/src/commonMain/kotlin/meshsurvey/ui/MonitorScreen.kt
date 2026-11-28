@@ -96,7 +96,7 @@ fun MonitorScreen(model: UiModel) {
         }
         FlowRow(verticalArrangement = Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Text((if (LocalCompact.current) "Live" else "Live receptions") + " (${merged.size})", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.CenterVertically).padding(end = 8.dp))
-            if (receivers.size > 1) TextButton(onClick = { allRadios = !allRadios }) {
+            if (activeReceivers(model).size > 1) TextButton(onClick = { allRadios = !allRadios }) {
                 Text(if (allRadios) "Only ${engine.radioLabel()}" else "All radios")
             }
             TextButton(onClick = { showEvents = !showEvents }) { Text(if (showEvents) "Packets" else "Event log (${events.size})") }
@@ -105,10 +105,10 @@ fun MonitorScreen(model: UiModel) {
             LazyColumn(Modifier.weight(1f)) { items(events) { Text(it, fontSize = 12.sp, fontFamily = FontFamily.Monospace) } }
         } else {
           // The table keeps its column widths and scrolls sideways in narrow windows instead of squeezing or overflowing.
-          val multi = receivers.size > 1
+          val multi = activeReceivers(model).size > 1
           val compact = LocalCompact.current
           // Phone width: the columns that matter (who, what, how strong) fit without scrolling; preset/relay/position move to Details.
-          val cols = if (compact) listOfNotNull("time" to 62, if (multi) "radio" to 50 else null, "from" to 74, "type" to 80, "RSSI" to 40, "SNR" to 52, "hops" to 34)
+          val cols = if (compact) listOfNotNull("time" to 68, if (multi) "radio" to 50 else null, "from" to 74, "type" to 80, "RSSI" to 40, "SNR" to 52, "hops" to 34)
               else listOfNotNull("time" to 72, if (multi) "radio" to 70 else null, "preset" to 100, "from" to 120, "type" to 104, "RSSI" to 48,
               "SNR" to 52, "hops" to 44, "relay" to 46, "pos" to 34)
           Box(Modifier.weight(1f).fillMaxWidth().horizontalScroll(rememberScrollState())) {
@@ -120,7 +120,7 @@ fun MonitorScreen(model: UiModel) {
                 items(merged) { (rxEngine, o) ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         val name = nodes[o.fromNode]?.shortName ?: rxEngine.nodes.value[o.fromNode]?.shortName ?: MeshEnums.nodeId(o.fromNode)
-                        Cell(model.platform.formatTime(o.rxMs), if (compact) 62 else 72)
+                        Cell(model.platform.formatTime(o.rxMs), if (compact) 68 else 72)
                         if (multi) Cell(rxEngine.radioLabel(), if (compact) 50 else 70)
                         if (!compact) Cell(o.preset ?: "?", 100)
                         Cell(name, if (compact) 74 else 120)

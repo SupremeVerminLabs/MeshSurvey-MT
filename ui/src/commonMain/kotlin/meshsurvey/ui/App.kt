@@ -191,9 +191,7 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
         FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (!compact) Text("MeshSurvey ${engine.edition.name.lowercase().replaceFirstChar { it.uppercase() }}", color = pal.onBar,
                 fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.align(Alignment.CenterVertically))
-            val all by model.station.receivers.collectAsState()
-            // radios in use (connected or reconnecting); the always-present first engine is hidden while it has no radio
-            val receivers = all.filter { it.connectionWanted.collectAsState().value || it.radioStatus.collectAsState().value.state != RadioState.DISCONNECTED }
+            val receivers = activeReceivers(model)
             val pm1 by engine.radioMetrics.collectAsState()
             if (receivers.size <= 1) Chip(radioLabel(radio.state) + (if (radio.info.protocol == MeshProtocol.MESHCORE) " · MeshCore" else "") + batteryShort(pm1), radioColor(radio.state))
             else receivers.forEach { e ->
@@ -320,6 +318,13 @@ fun batteryShort(m: meshsurvey.core.radio.RadioMetrics?): String = when {
     m.batteryLevel != null -> if (m.batteryLevel!! > 100) " · ⚡" else " · ${m.batteryLevel} %"
     m.voltage != null && m.voltage!! > 0 -> " · ${fmt(m.voltage!!, 2)} V"
     else -> ""
+}
+
+/** Radios in use (connected or reconnecting). The always-present first engine is left out while it has no radio. */
+@Composable
+fun activeReceivers(model: UiModel): List<SurveyEngine> {
+    val all by model.station.receivers.collectAsState()
+    return all.filter { it.connectionWanted.collectAsState().value || it.radioStatus.collectAsState().value.state != RadioState.DISCONNECTED }
 }
 
 /** True in phone-width layouts (below 600 dp). */
