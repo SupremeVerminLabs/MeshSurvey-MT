@@ -35,6 +35,8 @@ data class ObsFilter(
     val protocol: String? = null,
     /** Only receptions heard directly from these nodes (group keys from [meshsurvey.core.map.Heard.group]); null = all. */
     val heardGroups: Set<String>? = null,
+    /** Only receptions with exactly these heard_id values (e.g. "mt:!a4c62e61" = heard directly from that node). */
+    val heardIds: Set<String>? = null,
     val withPositionOnly: Boolean = false,
     val bbox: DoubleArray? = null, // latMin, latMax, lonMin, lonMax
     val limit: Int? = null,

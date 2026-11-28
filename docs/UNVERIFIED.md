@@ -84,3 +84,4 @@ Everything below is not yet verified. Each item names the check that closes it.
 | U-69 | MeshCore companion firmware sends PUSH_LOG_RX_DATA (0x88) for every received packet while an app is connected, with SNR×4 and RSSI bytes as parsed here | HV-66 — Monitor shows receptions with plausible SNR/RSSI |
 | U-70 | MeshCore Bluetooth companion radios advertise or expose the Nordic UART service, pair with the PIN on screen (or 123456), and deliver one frame per notification | HV-68 |
 | U-71 | MeshCore SELF_INFO / CONTACT / DEVICE_INFO field offsets match the firmware version in use (built from the published companion protocol, not captured traffic) | HV-66 — name, frequency and contact positions shown correctly |
+| U-72 | The Site Planner's current GeoJSON export has nested MultiPolygon bands with a numeric `dbm` property, as in its source (`src/map/contours.ts`) | HV-70 |

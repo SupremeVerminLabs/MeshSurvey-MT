@@ -104,6 +104,11 @@ USB GPS receiver with NMEA output.
 | HV-68 | MeshCore Bluetooth companion radio on Windows: listed as "MeshCore" in Connect, pairs with its PIN, reaches "Logging" | Screenshots |
 | HV-69 | Map with MeshCore data: Known nodes shows repeaters at their advertised positions; Heard from colours points per repeater; picking one repeater in Nodes filters the tiles and draws lines to it | Screenshot |
 
+## J. Coverage prediction
+| ID | Procedure | Evidence |
+|---|---|---|
+| HV-70 | Run a Site Planner prediction for one of your nodes, Export → GeoJSON, import it under Map → Prediction…, choose that node as transmitter after a drive or walk: bands line up with the planner's map; cells show agree/stronger/weaker; the summary's counts match the map | Screenshot of map + summary |
+
 ## Results table
 | ID | Date | Firmware | Hardware | Transport/OS | Result (pass/fail/n.a.) | Evidence link | Notes |
 |---|---|---|---|---|---|---|---|

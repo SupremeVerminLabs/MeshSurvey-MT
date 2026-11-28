@@ -171,6 +171,11 @@ object Schema {
             """CREATE TABLE known_node(protocol TEXT NOT NULL, node_id TEXT NOT NULL, name TEXT, kind TEXT, lat REAL, lon REAL,
                 updated_ms INTEGER NOT NULL, source TEXT NOT NULL, PRIMARY KEY(protocol, node_id))""",
         ),
+        // v8 — imported coverage predictions (Site Planner GeoJSON), kept as imported, with the transmitter they describe
+        listOf(
+            """CREATE TABLE prediction(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, file_name TEXT, imported_ms INTEGER NOT NULL,
+                geojson TEXT NOT NULL, target TEXT)""",
+        ),
     )
     val version get() = migrations.size
 }
@@ -282,6 +287,7 @@ class SqlStore(private val db: SqlDriver) : Store {
         f.sessionId?.let { w += "session_id = ?"; args += it }
         f.receiverNode?.let { w += "receiver_node = ?"; args += it }
         f.protocol?.let { w += "protocol = ?"; args += it }
+        f.heardIds?.let { s -> w += if (s.isEmpty()) "0" else "heard_id IN (${s.joinToString(",") { "?" }})"; args.addAll(s) }
         f.heardGroups?.let { s -> w += if (s.isEmpty()) "0" else "$HEARD_GROUP_SQL IN (${s.joinToString(",") { "?" }})"; args.addAll(s) }
         f.fromNodes?.let { s -> w += if (s.isEmpty()) "0" else "from_node IN (${s.joinToString(",") { "?" }})"; args.addAll(s) }
         f.types?.let { s -> w += if (s.isEmpty()) "0" else "type IN (${s.joinToString(",") { "?" }})"; args.addAll(s.map { it.name }) }
@@ -319,6 +325,27 @@ class SqlStore(private val db: SqlDriver) : Store {
             (if (protocol != null) " WHERE protocol=?" else "") + " ORDER BY protocol, name", listOfNotNull(protocol)) { r ->
             meshsurvey.core.model.KnownNode(r.string(0)!!, r.string(1)!!, r.string(2), r.string(3), r.double(4), r.double(5), r.long(6)!!, r.string(7)!!)
         }
+
+    // ---------------- coverage predictions ----------------
+
+    data class StoredPrediction(val id: Long, val name: String, val fileName: String?, val importedMs: Long, val target: String?)
+
+    fun insertPrediction(name: String, fileName: String?, geojson: String, nowMs: Long): Long =
+        db.insert("INSERT INTO prediction(name,file_name,imported_ms,geojson) VALUES(?,?,?,?)", listOf(name, fileName, nowMs, geojson))
+    fun predictions(): List<StoredPrediction> = db.query("SELECT id,name,file_name,imported_ms,target FROM prediction ORDER BY imported_ms DESC") { r ->
+        StoredPrediction(r.long(0)!!, r.string(1)!!, r.string(2), r.long(3)!!, r.string(4))
+    }
+    fun predictionGeoJson(id: Long): String? = db.query("SELECT geojson FROM prediction WHERE id=?", listOf(id)) { it.string(0) }.firstOrNull()
+    fun setPredictionTarget(id: Long, target: String?) { db.execute("UPDATE prediction SET target=? WHERE id=?", listOf(target, id)) }
+    fun deletePrediction(id: Long) { db.execute("DELETE FROM prediction WHERE id=?", listOf(id)) }
+
+    /**
+     * Transmitters a prediction can be compared against, with how many receptions were heard directly from each:
+     * Meshtastic by exact node ("mt:!xxxxxxxx", zero hops), MeshCore by key-prefix group ("mc:xx").
+     */
+    fun directTransmitters(): Map<String, Int> =
+        db.query("""SELECT CASE WHEN heard_id LIKE 'mc:%' THEN substr(heard_id,1,5) ELSE heard_id END AS t, COUNT(*) FROM observation
+            WHERE heard_id LIKE 'mt:!%' OR heard_id LIKE 'mc:%' GROUP BY t ORDER BY 2 DESC""") { r -> r.string(0)!! to (r.int(1) ?: 0) }.toMap()
 
     /** Distinct heard groups with reception counts (for the map's per-node filter). */
     fun heardGroupCounts(protocol: String? = null): Map<String, Int> {

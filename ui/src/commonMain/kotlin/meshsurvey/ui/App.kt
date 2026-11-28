@@ -60,6 +60,13 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
     var gpsStatus by mutableStateOf("GPS off")
     var peerSendsTests by mutableStateOf(false)
     var centeredOnce = false
+
+    /** Parsed coverage predictions by stored id (parsing a large GeoJSON on every map refresh would be wasteful). */
+    private val predictionCache = HashMap<Long, meshsurvey.core.map.PredictionMap?>()
+    fun prediction(id: Long): meshsurvey.core.map.PredictionMap? = predictionCache.getOrPut(id) {
+        engine.store.predictionGeoJson(id)?.let { meshsurvey.core.map.PredictionMap.parse(it, "prediction").first }
+    }
+    fun forgetPrediction(id: Long) { predictionCache.remove(id) }
     /** The start panel stays open until a radio is connected and the user picked what to do. */
     var startOpen by mutableStateOf(true)
 

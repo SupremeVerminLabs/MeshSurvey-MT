@@ -53,8 +53,12 @@ import meshsurvey.core.model.TrackPoint
 import meshsurvey.core.proto.MeshEnums
 import meshsurvey.core.store.ObsFilter
 import meshsurvey.core.map.Heard
+import meshsurvey.core.map.PredictionCompare
+import meshsurvey.core.map.PredictionMap
 import meshsurvey.core.model.KnownNode
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.TextStyle
@@ -87,6 +91,14 @@ data class MapFilter(
     val showHeard: Boolean = false,
     /** Only these heard-from nodes (Heard.group keys) in tiles, points and layers; null = all. */
     val heardGroups: Set<String>? = null,
+    /** Imported coverage prediction shown/compared (stored id); null = none. */
+    val predictionId: Long? = null,
+    /** Colour tiles by measured-vs-predicted instead of by measured signal (needs a transmitter chosen for the prediction). */
+    val compare: Boolean = true,
+    /** Draw the predicted coverage bands. */
+    val showBands: Boolean = true,
+    /** Allowance (dB) on each side of the predicted range before a cell counts as stronger/weaker. */
+    val toleranceDb: Double = 6.0,
 )
 
 private class MapData(
@@ -98,6 +110,9 @@ private class MapData(
     val presets: List<String>,
     val known: List<KnownNode>,
     val heardCounts: Map<String, Int>,
+    val pred: PredictionMap? = null,
+    val predTarget: String? = null,
+    val cmp: PredictionCompare.Summary? = null,
 )
 
 fun argb(v: Long) = Color(v.toInt())
@@ -133,8 +148,9 @@ fun MapScreen(model: UiModel) {
 
     val textMeasurer = rememberTextMeasurer()
     var pickNodes by remember { mutableStateOf(false) }
+    var predDialog by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
-        FilterBar(model, data?.presets ?: emptyList()) { pickNodes = true }
+        FilterBar(model, data?.presets ?: emptyList(), { predDialog = true }) { pickNodes = true }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val d = data
             SlippyMap(model.map, model.tiles, Modifier.fillMaxSize(),
@@ -142,11 +158,43 @@ fun MapScreen(model: UiModel) {
                     if (d == null) return@SlippyMap
                     val (lat, lon) = proj.toLatLon(off)
                     val k = d.grid.key(lat, lon)
-                    if (d.cells.containsKey(k)) selected = k to d.grid
+                    if (d.cells.containsKey(k) || d.cmp?.cells?.containsKey(k) == true) selected = k to d.grid
                 },
                 overlay = { proj ->
                     if (d == null) return@SlippyMap
-                    if (f.showGrid) for (c in d.cells.values) {
+                    val pr = d.pred
+                    if (pr != null && f.showBands) for (b in pr.bands.sortedBy { it.dbm }) {
+                        val col = argb(Scales.rssi(b.dbm.toInt()))
+                        for (poly in b.polys) {
+                            val tl = proj.toOffset(poly.maxLat, poly.minLon); val br = proj.toOffset(poly.minLat, poly.maxLon)
+                            if (br.x < 0 || tl.x > size.width || br.y < 0 || tl.y > size.height) continue
+                            val path = Path()
+                            for (ring in poly.rings) {
+                                var lx = Float.NaN; var ly = Float.NaN
+                                var i = 0
+                                while (i < ring.size) {
+                                    val o = proj.toOffset(ring[i], ring[i + 1])
+                                    if (i == 0) { path.moveTo(o.x, o.y); lx = o.x; ly = o.y }
+                                    else if (kotlin.math.abs(o.x - lx) + kotlin.math.abs(o.y - ly) >= 1.5f || i == ring.size - 2) { path.lineTo(o.x, o.y); lx = o.x; ly = o.y }
+                                    i += 2
+                                }
+                                path.close()
+                            }
+                            path.fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+                            drawPath(path, col.copy(alpha = 0.10f))
+                            drawPath(path, col.copy(alpha = 0.7f), style = Stroke(1.2f))
+                        }
+                    }
+                    val cmp = d.cmp
+                    if (f.showGrid && cmp != null && f.compare) for (c in cmp.cells.values) {
+                        val b = d.grid.bounds(c.key)
+                        val tl = proj.toOffset(b.lat1, b.lon0); val br = proj.toOffset(b.lat0, b.lon1)
+                        if (br.x < 0 || tl.x > size.width || br.y < 0 || tl.y > size.height) continue
+                        val sz = Size((br.x - tl.x).coerceAtLeast(2f), (br.y - tl.y).coerceAtLeast(2f))
+                        drawRect(argb(PredictionCompare.color(c.cls)).copy(alpha = if (c.receptions > 0) 0.55f else 0.35f), tl, sz)
+                        if (c.nearNoise && sz.width > 10) drawRect(Color.Black, tl, sz, style = Stroke(1f))
+                    }
+                    else if (f.showGrid) for (c in d.cells.values) {
                         val b = d.grid.bounds(c.key)
                         val tl = proj.toOffset(b.lat1, b.lon0); val br = proj.toOffset(b.lat0, b.lon1)
                         if (br.x < 0 || tl.x > size.width || br.y < 0 || tl.y > size.height) continue
@@ -235,12 +283,14 @@ fun MapScreen(model: UiModel) {
                 Button(onClick = { fix?.let { model.map.centerOn(it.lat, it.lon, maxOf(model.map.zoom, 15.0)) } }) { Text("◎") }
             }
             Legend(f, data, Modifier.align(Alignment.BottomStart).padding(8.dp))
+            data?.let { d -> if (d.pred != null) PredictionCard(model, d, Modifier.align(Alignment.TopStart).padding(8.dp)) }
             Text(model.tiles.attribution, fontSize = 10.sp, modifier = Modifier.align(Alignment.BottomEnd)
                 .background(Color(0xAAFFFFFF)).padding(horizontal = 4.dp))
         }
     }
-    selected?.let { (key, grid) -> CellDialog(model, grid, key, f) { selected = null } }
+    selected?.let { (key, grid) -> CellDialog(model, grid, key, f, data?.cmp?.cells?.get(key)) { selected = null } }
     if (pickNodes) data?.let { d -> NodePicker(model, d) { pickNodes = false } }
+    if (predDialog) PredictionDialog(model) { predDialog = false }
 }
 
 private fun cellColor(c: CellStats, m: Metric): Color = when (c.cls) {
@@ -274,11 +324,21 @@ private fun load(model: UiModel, f: MapFilter): MapData {
     val trackForCells = if (f.minSnr != null || f.onlyMyDevices || f.preset != null || f.heardGroups != null) emptyList() else track
     val cells = Coverage.aggregate(grid, obs, trackForCells, if (f.heardGroups != null || f.protocol == "meshcore") emptyList() else tests)
     val presets = store.sessions().filter { f.protocol == null || it.protocol == f.protocol }.mapNotNull { it.preset }.distinct()
-    return MapData(grid, cells, obs, track, tests, presets, store.knownNodes(f.protocol), store.heardGroupCounts(f.protocol))
+    val known = store.knownNodes(f.protocol)
+    val heard = store.heardGroupCounts(f.protocol)
+    val pid = f.predictionId ?: return MapData(grid, cells, obs, track, tests, presets, known, heard)
+    val pred = model.prediction(pid) ?: return MapData(grid, cells, obs, track, tests, presets, known, heard)
+    val target = store.predictions().firstOrNull { it.id == pid }?.target
+    val cmp = target?.let { t ->
+        val tf = obsFilter(model, f).copy(heardGroups = if (t.startsWith("mc:")) setOf(t) else null, heardIds = if (t.startsWith("mt:")) setOf(t) else null,
+            protocol = null, receiverNode = f.receiverNode)
+        PredictionCompare.compare(pred, grid, store.observations(tf), track.filter { it.radioReady }, f.toleranceDb)
+    }
+    return MapData(grid, cells, obs, track, tests, presets, known, heard, pred, target, cmp)
 }
 
 @Composable
-private fun FilterBar(model: UiModel, presets: List<String>, onPickNodes: () -> Unit) {
+private fun FilterBar(model: UiModel, presets: List<String>, onPrediction: () -> Unit, onPickNodes: () -> Unit) {
     val f = model.mapFilter
     fun set(n: MapFilter) { model.mapFilter = n }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 2.dp),
@@ -290,6 +350,7 @@ private fun FilterBar(model: UiModel, presets: List<String>, onPickNodes: () -> 
             listOf("Both protocols" to { set(f.copy(protocol = null, heardGroups = null, preset = null)) },
                 "Meshtastic" to { set(f.copy(protocol = "meshtastic", heardGroups = null, preset = null)) },
                 "MeshCore" to { set(f.copy(protocol = "meshcore", heardGroups = null, preset = null)) }))
+        OutlinedButton(onClick = onPrediction) { Text(if (f.predictionId != null) "Prediction ✓" else "Prediction…", fontSize = 13.sp) }
         FilterChip(f.showGrid, { set(f.copy(showGrid = !f.showGrid)) }, { Text("Tile colours") })
         FilterChip(f.showKnown, { set(f.copy(showKnown = !f.showKnown)) }, { Text("Known nodes") })
         FilterChip(f.showHeard, { set(f.copy(showHeard = !f.showHeard)) }, { Text("Heard from") })
@@ -337,6 +398,12 @@ private fun Legend(f: MapFilter, d: MapData?, modifier: Modifier) {
         }
         if (f.showKnown) Text("▲ repeater  ■ other node, at its advertised position (grey = not heard directly yet)", fontSize = 10.sp, color = Color.DarkGray)
         if (!f.showGrid) return@Column
+        if (d?.cmp != null && f.compare) {
+            Text("Measured vs predicted (cells)", fontSize = 11.sp)
+            PredictionCompare.CellClass.entries.forEach { LegendRow(argb(PredictionCompare.color(it)), it.label) }
+            Text("Outlined: SNR below −5 dB, RSSI reads high there", fontSize = 10.sp, color = Color.DarkGray)
+            return@Column
+        }
         val entries = if (f.metric == Metric.SNR)
             listOf(5.0 to "≥ 5 dB", 0.0 to "≥ 0", -7.0 to "≥ −7", -12.0 to "≥ −12", -99.0 to "< −12").map { argb(Scales.snr(it.first)) to it.second }
         else listOf(-80 to "≥ −90 dBm", -100 to "≥ −105", -110 to "≥ −115", -120 to "≥ −122", -130 to "< −122").map { argb(Scales.rssi(it.first)) to it.second }
@@ -359,7 +426,7 @@ private fun LegendRow(c: Color, label: String) {
 }
 
 @Composable
-private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, onClose: () -> Unit) {
+private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, cmp: PredictionCompare.Cell?, onClose: () -> Unit) {
     val engine = model.engine
     val b = grid.bounds(key)
     val names = remember { engine.store.nodeNames() }
@@ -374,6 +441,15 @@ private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, onCl
         title = { Text("Cell ${f.cellM} m · ${fmt(b.centerLat, 5)}, ${fmt(b.centerLon, 5)}") },
         text = {
             Column {
+                if (cmp != null) {
+                    Text("Prediction: ${cmp.cls.label}", color = argb(PredictionCompare.color(cmp.cls)), fontSize = 13.sp)
+                    Text("Predicted ${cmp.predLo?.let { lo -> "${lo.toInt()}" + (cmp.predHi?.let { " to ${it.toInt()}" } ?: " or more") + " dBm" } ?: "nothing (below the planner's floor)"}" +
+                        (cmp.medianRssi?.let { " · measured median ${fmt(it, 0)} dBm from ${cmp.receptions} direct receptions" } ?: " · not heard") +
+                        (cmp.residualDb?.let { " · difference ${if (it > 0) "+" else ""}${fmt(it, 1)} dB" } ?: "") +
+                        (if (cmp.trackPoints > 0) " · ${cmp.trackPoints} track points while logging" else ""), fontSize = 12.sp)
+                    if (cmp.nearNoise) Text("Median SNR ${fmt(cmp.medianSnr!!, 1)} dB: near the noise floor, RSSI reads higher than the signal.", fontSize = 11.sp, color = Color(0xFF8D6E00))
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                }
                 if (cell != null) {
                     Text("${cell.observations} receptions · ${cell.direct} heard straight from the sender (0 hops)")
                     Text("SNR best ${cell.bestSnr?.let { fmt(it, 1) } ?: "–"} / median ${cell.medianSnr?.let { fmt(it, 1) } ?: "–"} dB · " +
@@ -404,6 +480,98 @@ private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, onCl
                         }
                     }
                 }
+            }
+        })
+}
+
+/** Label for a transmitter key: "mt:!xxxxxxxx" (Meshtastic node) or "mc:xx" (MeshCore key-prefix group). */
+fun transmitterLabel(model: UiModel, t: String, known: List<KnownNode>): String =
+    if (t.startsWith("mt:!")) {
+        val num = t.removePrefix("mt:!").toLongOrNull(16)
+        val nm = num?.let { model.engine.store.nodeNames()[it]?.label }
+        if (nm != null) "$nm (${t.removePrefix("mt:")})" else t.removePrefix("mt:")
+    } else Heard.label(t, known) + " · MeshCore"
+
+/** Summary of the active prediction and, once a transmitter is chosen, the measured-vs-predicted comparison. */
+@Composable
+private fun PredictionCard(model: UiModel, d: MapData, modifier: Modifier) {
+    val f = model.mapFilter
+    var open by remember { mutableStateOf(true) }
+    Column(modifier.widthIn(max = 420.dp).background(Color(0xEEFFFFFF), RoundedCornerShape(6.dp)).padding(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Prediction: ${d.pred!!.name}", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f, fill = false))
+            TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Show") }
+        }
+        if (!open) return@Column
+        val p = d.pred
+        Text("Bands ${p.levels.firstOrNull()?.toInt()} to ${p.levels.lastOrNull()?.toInt()} dBm, ${fmt(p.stepDb, 1)} dB apart · predicted received signal for one transmitter",
+            fontSize = 11.sp, color = Color.DarkGray)
+        val t = d.predTarget
+        if (t == null) { Text("Choose which transmitter this prediction is for (Prediction… button) to compare it with your measurements.", fontSize = 12.sp); return@Column }
+        Text("Transmitter: ${transmitterLabel(model, t, d.known)}", fontSize = 12.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(f.compare, { model.mapFilter = f.copy(compare = !f.compare) }, { Text("Colour tiles by comparison", fontSize = 11.sp) })
+            FilterChip(f.showBands, { model.mapFilter = f.copy(showBands = !f.showBands) }, { Text("Bands", fontSize = 11.sp) })
+        }
+        d.cmp?.lines()?.forEach { Text("• $it", fontSize = 11.sp) }
+        Text("RSSI measured by your radio vs the planner's predicted received signal. The planner's settings (antenna heights, gains, " +
+            "cable loss, clutter) and your receiver's antenna both shift the result.", fontSize = 10.sp, color = Color.DarkGray)
+    }
+}
+
+/** Import, choose and configure coverage predictions. */
+@Composable
+private fun PredictionDialog(model: UiModel, onClose: () -> Unit) {
+    val store = model.engine.store
+    var list by remember { mutableStateOf(store.predictions()) }
+    var msg by remember { mutableStateOf<String?>(null) }
+    val f = model.mapFilter
+    val transmitters = remember { store.directTransmitters() }
+    val known = remember { store.knownNodes() }
+    AlertDialog(onDismissRequest = onClose, confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
+        title = { Text("Coverage predictions") },
+        text = {
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Import a prediction from the Meshtastic Site Planner (site.meshtastic.org): run your site, then Export → GeoJSON. " +
+                    "PNG and KML exports hold colours only and cannot be compared.", fontSize = 12.sp)
+                Button(onClick = {
+                    model.platform.openText { text ->
+                        if (text == null) return@openText
+                        val (p, err) = PredictionMap.parse(text, "prediction")
+                        if (p == null) { msg = err; return@openText }
+                        val id = store.insertPrediction(p.name, null, text, model.engine.clock.wallMs())
+                        list = store.predictions()
+                        model.mapFilter = model.mapFilter.copy(predictionId = id)
+                        msg = "Imported \"${p.name}\" (${p.bands.size} bands). Now choose its transmitter below."
+                    }
+                }) { Text("Import GeoJSON…") }
+                msg?.let { Text(it, fontSize = 12.sp, color = Color(0xFF8D6E00)) }
+                HorizontalDivider()
+                if (list.isEmpty()) Text("No predictions imported yet.", fontSize = 12.sp)
+                list.forEach { sp ->
+                    val active = model.mapFilter.predictionId == sp.id
+                    Column(Modifier.fillMaxWidth().background(if (active) Color(0x1A1976D2) else Color.Transparent, RoundedCornerShape(4.dp)).padding(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(sp.name + " · " + model.platform.formatDateTime(sp.importedMs), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { model.mapFilter = model.mapFilter.copy(predictionId = if (active) null else sp.id) }) { Text(if (active) "Hide" else "Show") }
+                            TextButton(onClick = {
+                                store.deletePrediction(sp.id); model.forgetPrediction(sp.id); list = store.predictions()
+                                if (active) model.mapFilter = model.mapFilter.copy(predictionId = null)
+                            }) { Text("Delete") }
+                        }
+                        val suggestions = transmitters.keys.sortedByDescending { k -> transmitterLabel(model, k, known).contains(sp.name, ignoreCase = true) }
+                        Menu("Transmitter: " + (sp.target?.let { transmitterLabel(model, it, known) } ?: "choose…"),
+                            suggestions.map { k -> "${transmitterLabel(model, k, known)} · ${transmitters[k]} direct receptions" to {
+                                store.setPredictionTarget(sp.id, k); list = store.predictions()
+                                model.mapFilter = model.mapFilter.copy(predictionId = sp.id)
+                            } })
+                    }
+                }
+                if (transmitters.isEmpty()) Text("No transmitter heard directly yet: comparisons use only receptions heard straight from the " +
+                    "predicted node (zero hops), because relayed copies say nothing about its own signal.", fontSize = 11.sp, color = Color.DarkGray)
+                HorizontalDivider()
+                Menu("Tolerance ±${f.toleranceDb.toInt()} dB", listOf(3.0, 6.0, 10.0).map { v -> "±${v.toInt()} dB" to { model.mapFilter = model.mapFilter.copy(toleranceDb = v) } })
+                Text("Measured RSSI inside the predicted range ± tolerance counts as agreeing. Use a small cell size (100–250 m).", fontSize = 11.sp, color = Color.DarkGray)
             }
         })
 }

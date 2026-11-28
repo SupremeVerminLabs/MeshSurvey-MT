@@ -3,6 +3,20 @@
 Verification status keys: **Implemented** · **Compiled** (by a real compiler; says where) · **Simulator tested** ·
 **Integration tested** · **Hardware tested** (physical radio; says which) · **Unverified**.
 
+## Unreleased: Coverage prediction vs measurement, 2026-11-27
+
+**Implemented, unit tested (136 local tests); compiled by CI; not yet tried with a real Site Planner export.**
+
+* Map → **Prediction…**: import a Meshtastic Site Planner **GeoJSON** export (nested iso-bands, `dbm` property; other GeoJSON
+  polygons with `dbm`/`rssi`/`signal_dbm`/`value` work too). PNG/KML exports are refused with the reason (colours only).
+  Predictions are stored in the database (schema v8) and listed for show/hide/delete.
+* Choose the **transmitter** the prediction is for, from nodes heard directly (Meshtastic: exact node at zero hops; MeshCore:
+  key-prefix group). Only direct receptions are compared: relayed copies say nothing about that transmitter's own signal.
+* Per cell: predicted range [band, next band) vs median measured RSSI → agrees (± tolerance, default 6 dB), stronger, weaker,
+  heard where nothing was predicted, passed through predicted coverage without hearing it (labelled weak evidence), passed
+  through with neither. Cells with median SNR < −5 dB are outlined (RSSI there reads high).
+* Summary card with explicit denominators and the median difference; bands drawn on the map; cell details show predicted vs measured.
+
 ## Unreleased: MeshCore listening and map layers, 2026-11-27
 
 **Implemented, unit tested (local `tools/verify-core.sh`, 132 tests); compiled by CI; not hardware tested.**
