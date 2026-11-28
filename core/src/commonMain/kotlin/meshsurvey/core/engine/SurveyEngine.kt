@@ -320,8 +320,10 @@ class SurveyEngine(
     }
 
     private fun updateMetrics(m: meshsurvey.core.proto.DeviceMetricsInfo) {
-        if (m.channelUtilization == null && m.airUtilTx == null) return
-        _metrics.value = RadioMetrics(m.channelUtilization?.toDouble(), m.airUtilTx?.toDouble(), clock.wallMs())
+        if (m.channelUtilization == null && m.airUtilTx == null && m.batteryLevel == null && m.voltage == null) return
+        val prev = _metrics.value
+        _metrics.value = RadioMetrics(m.channelUtilization?.toDouble() ?: prev?.channelUtilPct, m.airUtilTx?.toDouble() ?: prev?.airUtilTxPct,
+            clock.wallMs(), m.batteryLevel ?: prev?.batteryLevel, m.voltage?.toDouble() ?: prev?.voltage)
     }
 
     override fun onNode(node: NodeRecord) {

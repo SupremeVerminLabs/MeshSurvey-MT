@@ -161,11 +161,13 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
         Text("MeshSurvey ${engine.edition.name.lowercase().replaceFirstChar { it.uppercase() }}", color = Color.White,
             fontWeight = FontWeight.Bold, fontSize = 16.sp)
         val receivers by model.station.receivers.collectAsState()
-        if (receivers.size <= 1) Chip(radioLabel(radio.state), radioColor(radio.state))
+        val pm1 by engine.radioMetrics.collectAsState()
+        if (receivers.size <= 1) Chip(radioLabel(radio.state) + (pm1?.batteryLevel?.let { if (it > 100) " · ⚡" else " · $it %" } ?: ""), radioColor(radio.state))
         else receivers.forEach { e ->
             val st by e.radioStatus.collectAsState()
+            val pm by e.radioMetrics.collectAsState()
             // one chip per radio; the outlined one is shown in the screens below; tap to switch
-            Text((if (e === engine) "▸ " else "") + "${e.radioLabel()} · ${radioLabel(st.state)}", color = Color.White, fontSize = 12.sp,
+            Text((if (e === engine) "▸ " else "") + "${e.radioLabel()} · ${radioLabel(st.state)}" + (pm?.batteryLevel?.let { if (it > 100) " · ⚡" else " · $it %" } ?: ""), color = Color.White, fontSize = 12.sp,
                 modifier = Modifier.background(radioColor(st.state), RoundedCornerShape(10.dp)).clickable { model.engine = e }
                     .padding(horizontal = 8.dp, vertical = 2.dp))
         }

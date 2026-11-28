@@ -244,6 +244,19 @@ data class TestBudget(
  * channelUtil = share of time the channel was busy (all nodes it can hear). These are REPORTED values,
  * unlike [TestBudget], which is an ESTIMATE of this app's own test packets only.
  */
-data class RadioMetrics(val channelUtilPct: Double?, val airUtilTxPct: Double?, val wallMs: Long) {
+data class RadioMetrics(
+    val channelUtilPct: Double?,
+    val airUtilTxPct: Double?,
+    val wallMs: Long,
+    /** DeviceMetrics.battery_level: 0–100 %, 101 = running on external power (firmware convention). */
+    val batteryLevel: Int? = null,
+    val voltage: Double? = null,
+) {
+    /** "87 %, 4.02 V", "external power, 4.20 V", or null when the radio reports neither. */
+    val batteryText: String? get() {
+        val lvl = batteryLevel?.let { if (it > 100) "external power" else "$it %" }
+        val v = voltage?.takeIf { it > 0 }?.let { "${(kotlin.math.round(it * 100) / 100)} V" }
+        return listOfNotNull(lvl, v).joinToString(", ").ifEmpty { null }
+    }
     fun freshAt(nowMs: Long, maxAgeMs: Long = 20 * 60_000L) = nowMs - wallMs <= maxAgeMs
 }

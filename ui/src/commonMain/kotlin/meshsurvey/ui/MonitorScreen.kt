@@ -70,6 +70,8 @@ fun MonitorScreen(model: UiModel) {
                 val timing by engine.timing.collectAsState()
                 Text("Reported by radio: " + (m?.let { "transmitting ${it.airUtilTxPct?.let { v -> fmt(v, 1) } ?: "?"} %, channel busy ${it.channelUtilPct?.let { v -> fmt(v, 1) } ?: "?"} %" }
                     ?: "no airtime report yet") + " · rejected GPS fixes ${stats.rejectedFixes}", fontSize = 13.sp)
+                Text("Power (reported by radio): " + (m?.batteryText?.let { "$it · as of ${model.platform.formatTime(m!!.wallMs)}" }
+                    ?: "not reported yet (sent with the radio's device telemetry, typically every 30–60 min)"), fontSize = 13.sp)
                 if (timing.tickGaps > 0 || timing.clockJumps > 0) Text("Timing: app suspended ${timing.tickGaps}× (longest ${timing.longestGapMs / 1000} s), " +
                     "clock changed ${timing.clockJumps}× — recorded with the data", fontSize = 12.sp, color = Color(0xFFE65100))
                 Text("Stock firmware drops duplicate copies before they reach the app: each row is the first copy your node received. " +
