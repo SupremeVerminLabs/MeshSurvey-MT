@@ -23,6 +23,7 @@ import meshsurvey.core.model.Source
 import meshsurvey.core.model.TestRx
 import meshsurvey.core.proto.NodeRecord
 import meshsurvey.core.proto.PositionInfo
+import meshsurvey.core.model.EquipmentProfile
 import meshsurvey.core.radio.LinkKind
 import meshsurvey.core.radio.RadioClient
 import meshsurvey.core.radio.RadioInfo
@@ -67,6 +68,41 @@ class SurveyEngine(
     private val _radioPosition = MutableStateFlow<PositionInfo?>(null)
     /** Latest position the radio reported about itself (null = none yet). */
     val radioPosition: StateFlow<PositionInfo?> = _radioPosition
+    private var lastOwnInfoPollMono = 0L
+
+    // ---------------- equipment profiles (optional, user-entered) ----------------
+    private val _profiles = MutableStateFlow(store.profiles())
+    val profiles: StateFlow<List<EquipmentProfile>> = _profiles
+    private val _activeProfileId = MutableStateFlow(store.getMeta("active_profile_id")?.ifEmpty { null })
+    /** Profile recorded with new survey sessions (null = none). */
+    val activeProfileId: StateFlow<String?> = _activeProfileId
+
+    fun saveProfile(p: EquipmentProfile) {
+        val now = clock.wallMs()
+        store.upsertProfile(p.copy(createdMs = if (p.createdMs == 0L) now else p.createdMs, updatedMs = now, originDevice = null))
+        _profiles.value = store.profiles()
+    }
+
+    fun deleteProfile(id: String) {
+        store.deleteProfile(id)
+        if (_activeProfileId.value == id) setActiveProfile(null)
+        _profiles.value = store.profiles()
+    }
+
+    /**
+     * Each survey session belongs to one profile, so changing it while logging ends the current session and
+     * starts a new one (recorded in the event log); nothing already logged is re-attributed.
+     */
+    fun setActiveProfile(id: String?) {
+        if (id == _activeProfileId.value) return
+        _activeProfileId.value = id
+        store.setMeta("active_profile_id", id ?: "")
+        if (logger.session != null && radio.isReady) {
+            logger.endSession()
+            val s = logger.startSession(radio.info, source(), id)
+            event("Equipment profile changed to ${_profiles.value.firstOrNull { it.id == id }?.name ?: "none"}; new session ${s.id.take(6)}")
+        }
+    }
     val logger = ReceptionLogger(store, clock, loggerConfig)
     val presets = PresetManager(store, radio, clock, configBackups)
     private val _metrics = MutableStateFlow<RadioMetrics?>(null)
@@ -186,6 +222,11 @@ class SurveyEngine(
             try { switchTo(f()) } catch (e: Exception) { scheduleReconnect("reconnect failed: ${e.message}") }
         }
         radio.tick()
+        // Radio GPS active: re-read the radio's own full-precision position once a minute (local phone API only, no RF).
+        if (radioGps.isEnabled && radio.isReady && clock.monotonicMs() - lastOwnInfoPollMono >= 60_000) {
+            lastOwnInfoPollMono = clock.monotonicMs()
+            radio.requestOwnInfo()
+        }
         radioGps.tick()
         ab.tick()
         reference.tick()
@@ -238,7 +279,7 @@ class SurveyEngine(
         val wasReady = logger.radioReady
         if (state == RadioState.READY && !wasReady) {
             logger.radioReady = true
-            val s = logger.startSession(radio.info, source())
+            val s = logger.startSession(radio.info, source(), _activeProfileId.value)
             windowStart = clock.wallMs(); lastWindowWrite = 0
             store.insertWindow(LoggingWindow(windowStart!!, clock.wallMs(), null))
             event("Radio ready (${radio.info.preset ?: "preset unknown"}); logging session ${s.id.take(6)} started" +

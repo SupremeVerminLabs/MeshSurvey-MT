@@ -46,6 +46,7 @@ class RadioGpsSource(private val clock: Clock) {
     private var onStatus: ((String) -> Unit)? = null
     private var held: PositionInfo? = null
     private var heldAccuracy: Double? = null
+    private var heldReceivedWallMs: Long? = null
     private var lastReport: PositionInfo? = null
     private var lastReportWallMs: Long? = null
     private var moving = false
@@ -60,7 +61,10 @@ class RadioGpsSource(private val clock: Clock) {
     fun stop() { enabled = false; onFix = null; onStatus = null }
 
     /** Forget everything about the previous radio (call on connect/disconnect). */
-    fun reset() { held = null; heldAccuracy = null; lastReport = null; lastReportWallMs = null; moving = false; status() }
+    fun reset() { held = null; heldAccuracy = null; heldReceivedWallMs = null; lastReport = null; lastReportWallMs = null; moving = false; status() }
+
+    /** The position currently held, if any (for "use as fixed reference position"). */
+    fun heldPosition(): PositionInfo? = held
 
     /** @param fromConfig true for the position in the radio's NodeInfo at connect (may be stored from earlier). */
     fun onReport(p: PositionInfo, fromConfig: Boolean = false) {
@@ -75,23 +79,25 @@ class RadioGpsSource(private val clock: Clock) {
             }
         }
         val err = listOfNotNull(precisionErrorM(p.precisionBits), hdopErrorM(p.hdop)).maxOrNull()
-        val prev = lastReport
-        lastReport = p; lastReportWallMs = now
         if (err != null && err > MAX_USABLE_ERROR_M) {
-            held = null
-            say("Radio shares its position only to about ${err.roundToInt()} m, too coarse to use. " +
-                "Set full position precision on a private channel, or use another position source.")
+            // Typically the radio's own over-the-air broadcast, blurred to the channel's position precision.
+            // The full-precision position comes from the radio's NodeInfo (read at connect and every minute), so
+            // a blurred broadcast is simply ignored; it never replaces a good position.
+            if (held == null) say("So far only a blurred position (~${err.roundToInt()} m) has been seen; waiting for the radio's " +
+                "full-precision position (read from the radio about once a minute).")
             return
         }
+        val prev = lastReport
+        lastReport = p; lastReportWallMs = now
         val moved = prev != null && Geo.distanceM(prev.lat, prev.lon, p.lat, p.lon) > max(MOVE_THRESHOLD_M, 2 * (err ?: 0.0))
         val speedMoving = (p.groundSpeedMps ?: 0) >= 2
         if (moved || speedMoving) {
             moving = true; held = null
         } else if (prev == null || !moving) {
-            held = p; heldAccuracy = err
+            held = p; heldAccuracy = err; heldReceivedWallMs = now
         } else {
-            // two consecutive agreeing reports after a move: stationary again
-            moving = false; held = p; heldAccuracy = err
+            // two consecutive agreeing reports after a change: treated as stationary again
+            moving = false; held = p; heldAccuracy = err; heldReceivedWallMs = now
         }
         status()
     }
@@ -100,7 +106,9 @@ class RadioGpsSource(private val clock: Clock) {
     fun tick() {
         if (!enabled) return
         val h = held ?: return
-        onFix?.invoke(Fix(h.lat, h.lon, heldAccuracy, h.altitudeM?.toDouble(), clock.wallMs(), clock.monotonicMs(), FixSource.RADIO))
+        // positionTimeMs = when the radio determined this position, so each observation records its real age.
+        val posTime = h.timeS?.let { it * 1000 } ?: heldReceivedWallMs
+        onFix?.invoke(Fix(h.lat, h.lon, heldAccuracy, h.altitudeM?.toDouble(), clock.wallMs(), clock.monotonicMs(), FixSource.RADIO, posTime))
     }
 
     private fun status() {
@@ -108,14 +116,16 @@ class RadioGpsSource(private val clock: Clock) {
         val age = lastReportWallMs?.let { ((clock.wallMs() - it) / 60_000).toInt() }
         when {
             !enabled -> {}
-            moving -> say("Radio is moving: its position updates every few minutes, too rarely for a moving receiver. " +
-                "Receptions are logged without position until it is stationary again. Use phone, USB or Windows location GPS while moving.")
-            h == null -> say("Waiting for the radio's position (sent at connect and with each of its position broadcasts, " +
-                "typically every 5–60 min). The radio needs a GPS fix or a fixed position set.")
+            moving -> say("The radio's position changed between reports, so it is not treated as stationary. Receptions are " +
+                "logged without position until two reports agree again. For a moving receiver use phone, USB or Windows location GPS.")
+            h == null -> say("Waiting for the radio's position (read from the radio about once a minute). " +
+                "The radio needs a GPS fix or a fixed position set in it.")
             else -> {
-                val kind = if (h.locationSource == 1) "radio's fixed position" else "radio GPS"
-                val acc = heldAccuracy?.let { " ±${it.roundToInt()} m" } ?: ""
-                say("Using $kind$acc (stationary)" + (age?.let { "; last report ${it} min ago" } ?: ""))
+                val kind = if (h.locationSource == 1) "radio's configured fixed position" else "radio GPS"
+                val acc = heldAccuracy?.let { " ±${it.roundToInt()} m" } ?: " (accuracy not reported)"
+                val posAge = h.timeS?.let { ((clock.wallMs() / 1000 - it) / 60).coerceAtLeast(0) }
+                say("Using $kind$acc, assumed stationary" +
+                    (posAge?.let { "; position determined $it min ago" } ?: (age?.let { "; last report $it min ago" } ?: "")))
             }
         }
     }

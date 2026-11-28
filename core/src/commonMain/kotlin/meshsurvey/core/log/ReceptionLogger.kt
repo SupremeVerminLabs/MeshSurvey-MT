@@ -64,12 +64,15 @@ class ReceptionLogger(
 
     fun addObservationListener(l: (Observation) -> Unit) { listeners += l }
 
-    fun startSession(info: RadioInfo, source: Source): SurveySession {
+    fun startSession(info: RadioInfo, source: Source, profileId: String? = null): SurveySession {
         session?.let { endSession() }
+        val fq = FrequencyCalc.from(info)
         val s = SurveySession(
             id = newId(), startedMs = clock.wallMs(), endedMs = null, status = SessionStatus.ACTIVE,
             receiverNode = info.myNodeNum, linkKind = info.linkKind?.name, firmware = info.firmware,
             preset = info.preset, region = info.region, source = source,
+            profileId = profileId, hwModel = info.hwModel, txPowerDbm = info.txPowerDbm,
+            frequencyMhz = fq.mhz, frequencySource = fq.source.name,
         )
         store.insertSession(s)
         session = s
@@ -134,6 +137,7 @@ class ReceptionLogger(
             source = s.source,
             frequencySource = fq.source.name,
             fixSource = fix?.source?.name,
+            positionAgeMs = fix?.let { f -> f.positionTimeMs?.let { rx.phoneTimeMs - it } ?: fixAgeMs(f) },
         )
         val id = store.insertObservation(o)
         val saved = o.copy(id = id)

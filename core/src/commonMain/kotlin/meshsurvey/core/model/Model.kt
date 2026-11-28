@@ -65,6 +65,11 @@ data class Fix(
     val wallMs: Long,
     val monotonicMs: Long,
     val source: FixSource,
+    /**
+     * When the position itself was determined, if earlier than [wallMs]. Set for re-asserted stationary
+     * positions (radio GPS) so each observation records how old the underlying position really is.
+     */
+    val positionTimeMs: Long? = null,
 )
 
 enum class SessionStatus { ACTIVE, ENDED, INTERRUPTED }
@@ -84,6 +89,14 @@ data class SurveySession(
     /** Stock firmware suppresses duplicate receptions before the client sees them. */
     val duplicatesSuppressed: Boolean = true,
     val notes: String? = null,
+    /** User-entered equipment profile active for this session (null = none chosen). */
+    val profileId: String? = null,
+    /** Reported by the radio at session start (Meshtastic HardwareModel number). */
+    val hwModel: Int? = null,
+    /** Configured transmit power reported by the radio (dBm; 0 = firmware default for the region). Not measured output. */
+    val txPowerDbm: Int? = null,
+    val frequencyMhz: Double? = null,
+    val frequencySource: String? = null,
 )
 
 /** One physical reception reported by the connected radio. Never merged by packet id. */
@@ -122,6 +135,8 @@ data class Observation(
     val originDevice: String? = null,
     val frequencySource: String? = null,
     val fixSource: String? = null,
+    /** Age of the underlying position at reception (for re-asserted stationary positions this can be minutes). */
+    val positionAgeMs: Long? = null,
 )
 
 data class TrackPoint(

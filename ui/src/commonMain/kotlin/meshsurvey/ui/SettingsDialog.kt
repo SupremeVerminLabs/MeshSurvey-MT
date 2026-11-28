@@ -83,7 +83,19 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                         OutlinedTextField(manualAcc, { manualAcc = it }, label = { Text("± m (optional)") }, singleLine = true, modifier = Modifier.width(130.dp))
                     }
                 }
+                if (model.gpsOption?.id == RADIO_GPS_ID) engine.radioGps.heldPosition()?.let { h ->
+                    OutlinedButton(onClick = {
+                        manualLat = fmt(h.lat, 6); manualLon = fmt(h.lon, 6)
+                        platform.gpsOptions().firstOrNull { it.needsManual }?.let { g -> model.startGps(g, Triple(h.lat, h.lon, null)) }
+                        engine.event("Fixed reference position confirmed by the user from the radio's reported position ${fmt(h.lat, 6)}, ${fmt(h.lon, 6)}")
+                    }) { Text("Confirm as fixed reference position") }
+                    Text("Copies the radio's current position into a fixed position (source MANUAL) that you have confirmed; " +
+                        "the confirmation is recorded in the event log.", fontSize = 11.sp, color = Color.DarkGray)
+                }
                 if (model.gpsOption != null) OutlinedButton(onClick = { model.stopGps() }) { Text("Stop GPS") }
+
+                Section("Equipment profile (optional)")
+                EquipmentSection(model)
 
                 Section("Background logging")
                 Text("While a radio is connected, logging continues with the screen locked (Android shows a notification). " +

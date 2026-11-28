@@ -72,6 +72,12 @@ interface Store {
     fun insertTestRx(r: TestRx): Boolean
     fun testRx(sessionId: String? = null): List<TestRx>
 
+    // equipment profiles (user-entered; soft-deleted so old sessions keep their reference)
+    fun upsertProfile(p: meshsurvey.core.model.EquipmentProfile)
+    fun deleteProfile(id: String)
+    /** All profiles, including ones imported from other devices; deleted ones only if [includeDeleted]. */
+    fun profiles(includeDeleted: Boolean = false): List<meshsurvey.core.model.EquipmentProfile>
+
     // node names for display
     fun upsertNodeName(num: Long, longName: String?, shortName: String?, role: String?, nowMs: Long)
     fun nodeNames(): Map<Long, NodeName>

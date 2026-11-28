@@ -134,6 +134,18 @@ object Schema {
             """CREATE TABLE clock_event(id INTEGER PRIMARY KEY AUTOINCREMENT, wall_ms INTEGER NOT NULL, kind TEXT NOT NULL,
                 magnitude_ms INTEGER NOT NULL, session_id TEXT)""",
         ),
+        // v4 — equipment profiles, radio-reported session snapshot, position provenance
+        listOf(
+            """CREATE TABLE equipment_profile(id TEXT NOT NULL, origin_device TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+                fields TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(id, origin_device))""",
+            """ALTER TABLE survey_session ADD COLUMN profile_id TEXT""",
+            """ALTER TABLE survey_session ADD COLUMN hw_model INTEGER""",
+            """ALTER TABLE survey_session ADD COLUMN tx_power_dbm INTEGER""",
+            """ALTER TABLE survey_session ADD COLUMN frequency_mhz REAL""",
+            """ALTER TABLE survey_session ADD COLUMN frequency_source TEXT""",
+            """ALTER TABLE observation ADD COLUMN position_age_ms INTEGER""",
+        ),
     )
     val version get() = migrations.size
 }
@@ -165,10 +177,11 @@ class SqlStore(private val db: SqlDriver) : Store {
     // ---------------- sessions ----------------
 
     override fun insertSession(s: SurveySession) {
-        db.execute("""INSERT OR IGNORE INTO survey_session(id,started_ms,ended_ms,status,receiver_node,link_kind,firmware,preset,region,source,duplicates_suppressed,notes)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+        db.execute("""INSERT OR IGNORE INTO survey_session(id,started_ms,ended_ms,status,receiver_node,link_kind,firmware,preset,region,source,duplicates_suppressed,notes,
+            profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             listOf(s.id, s.startedMs, s.endedMs, s.status.name, s.receiverNode, s.linkKind, s.firmware, s.preset, s.region,
-                s.source.name, b(s.duplicatesSuppressed), s.notes))
+                s.source.name, b(s.duplicatesSuppressed), s.notes, s.profileId, s.hwModel, s.txPowerDbm, s.frequencyMhz, s.frequencySource))
     }
 
     override fun endSession(id: String, endedMs: Long, status: SessionStatus) {
@@ -176,11 +189,28 @@ class SqlStore(private val db: SqlDriver) : Store {
     }
 
     override fun sessions(): List<SurveySession> = db.query(
-        "SELECT id,started_ms,ended_ms,status,receiver_node,link_kind,firmware,preset,region,source,duplicates_suppressed,notes FROM survey_session ORDER BY started_ms DESC"
+        "SELECT id,started_ms,ended_ms,status,receiver_node,link_kind,firmware,preset,region,source,duplicates_suppressed,notes," +
+            "profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source FROM survey_session ORDER BY started_ms DESC"
     ) { r ->
         SurveySession(r.string(0)!!, r.long(1)!!, r.long(2), SessionStatus.valueOf(r.string(3)!!), r.long(4), r.string(5),
-            r.string(6), r.string(7), r.string(8), Source.valueOf(r.string(9)!!), r.long(10) == 1L, r.string(11))
+            r.string(6), r.string(7), r.string(8), Source.valueOf(r.string(9)!!), r.long(10) == 1L, r.string(11),
+            r.string(12), r.int(13), r.int(14), r.double(15), r.string(16))
     }
+
+    // ---------------- equipment profiles ----------------
+
+    override fun upsertProfile(p: meshsurvey.core.model.EquipmentProfile) {
+        db.execute("""INSERT OR REPLACE INTO equipment_profile(id,origin_device,name,fields,created_ms,updated_ms,deleted) VALUES(?,?,?,?,?,?,0)""",
+            listOf(p.id, o(p.originDevice), p.name, meshsurvey.core.model.EquipmentCodec.encode(p), p.createdMs, p.updatedMs))
+    }
+
+    override fun deleteProfile(id: String) {
+        db.execute("UPDATE equipment_profile SET deleted=1 WHERE id=? AND origin_device=''", listOf(id))
+    }
+
+    override fun profiles(includeDeleted: Boolean): List<meshsurvey.core.model.EquipmentProfile> = db.query(
+        "SELECT fields, origin_device FROM equipment_profile" + (if (includeDeleted) "" else " WHERE deleted=0") + " ORDER BY name"
+    ) { r -> meshsurvey.core.model.EquipmentCodec.decode(r.string(0)!!, un(r.string(1))) }.filterNotNull()
 
     override fun recoverInterrupted(nowMs: Long): Int = db.transaction {
         // end time = last thing we logged for that session, if any
@@ -205,10 +235,11 @@ class SqlStore(private val db: SqlDriver) : Store {
     override fun insertObservation(o: Observation): Long = db.insert(
         """INSERT OR IGNORE INTO observation(session_id,receiver_node,rx_ms,node_rx_time,lat,lon,accuracy_m,fix_age_ms,rssi,snr,packet_id,
             from_node,to_node,channel,portnum,type,status,hop_start,hop_limit,hops_away,relay_byte,payload_len,preset,region,frequency_mhz,
-            summary,source,origin_device,frequency_source,fix_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            summary,source,origin_device,frequency_source,fix_source,position_age_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         listOf(o.sessionId, o.receiverNode, o.rxMs, o.nodeRxTime, o.lat, o.lon, o.accuracyM, o.fixAgeMs, o.rssi, o.snr, o.packetId,
             o.fromNode, o.toNode, o.channel, o.portnum, o.type.name, o.status.name, o.hopStart, o.hopLimit, o.hopsAway, o.relayByte,
-            o.payloadLen, o.preset, o.region, o.frequencyMhz, o.summary, o.source.name, o(o.originDevice), o.frequencySource, o.fixSource)
+            o.payloadLen, o.preset, o.region, o.frequencyMhz, o.summary, o.source.name, o(o.originDevice), o.frequencySource, o.fixSource,
+            o.positionAgeMs)
     )
 
     private fun where(f: ObsFilter, args: MutableList<Any?>): String {
@@ -232,12 +263,13 @@ class SqlStore(private val db: SqlDriver) : Store {
         val args = ArrayList<Any?>()
         val sql = """SELECT id,session_id,receiver_node,rx_ms,node_rx_time,lat,lon,accuracy_m,fix_age_ms,rssi,snr,packet_id,from_node,to_node,
             channel,portnum,type,status,hop_start,hop_limit,hops_away,relay_byte,payload_len,preset,region,frequency_mhz,summary,source,origin_device,
-            frequency_source,fix_source FROM observation WHERE ${where(f, args)} ORDER BY rx_ms""" + (f.limit?.let { " LIMIT $it" } ?: "")
+            frequency_source,fix_source,position_age_ms FROM observation WHERE ${where(f, args)} ORDER BY rx_ms""" + (f.limit?.let { " LIMIT $it" } ?: "")
         return db.query(sql, args) { r ->
             Observation(r.long(0)!!, r.string(1), r.long(2), r.long(3)!!, r.long(4), r.double(5), r.double(6), r.double(7), r.long(8),
                 r.int(9), r.double(10), r.long(11)!!, r.long(12)!!, r.long(13)!!, r.int(14), r.int(15),
                 PacketType.valueOf(r.string(16)!!), RxStatus.valueOf(r.string(17)!!), r.int(18), r.int(19), r.int(20), r.int(21),
-                r.int(22), r.string(23), r.string(24), r.double(25), r.string(26), Source.valueOf(r.string(27)!!), un(r.string(28)), r.string(29), r.string(30))
+                r.int(22), r.string(23), r.string(24), r.double(25), r.string(26), Source.valueOf(r.string(27)!!), un(r.string(28)), r.string(29), r.string(30),
+                r.long(31))
         }
     }
 

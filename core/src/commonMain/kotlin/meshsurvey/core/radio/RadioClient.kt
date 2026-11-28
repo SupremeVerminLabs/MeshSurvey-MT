@@ -37,6 +37,8 @@ data class RadioInfo(
     val bandwidth: Int? = null,
     val spreadFactor: Int? = null,
     val codingRate: Int? = null,
+    /** Configured transmit power (LoRaConfig.tx_power, dBm; 0 = firmware default). Not a measured output. */
+    val txPowerDbm: Int? = null,
 )
 
 /** A packet as handed to the rest of the app, with the phone-side receive time. */
@@ -86,7 +88,26 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
     private var configAttempts = 0
     private var lastWantConfigMs = 0L
 
+    companion object {
+        /**
+         * Firmware's "config only" want_config nonce (PhoneAPI SPECIAL_NONCE_ONLY_CONFIG, 2.6+): the radio sends
+         * my_info, its own NodeInfo (full-precision position from its node database), metadata, channels and config,
+         * but no other nodes. Local phone-API traffic only; nothing is transmitted over LoRa.
+         */
+        const val NONCE_ONLY_CONFIG = 69420L
+    }
+
     fun addListener(l: RadioListener) { listeners += l }
+
+    /**
+     * Quietly re-reads the radio's own info (used by radio GPS to get its current full-precision position).
+     * Does not change [state]; returns false if not connected and ready.
+     */
+    fun requestOwnInfo(): Boolean {
+        if (state != RadioState.READY) return false
+        val l = link ?: return false
+        return l.send(MeshProto.wantConfig(NONCE_ONLY_CONFIG))
+    }
     fun removeListener(l: RadioListener) { listeners -= l }
 
     val isReady get() = state == RadioState.READY
@@ -182,7 +203,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
             is FromRadioMsg.Metadata -> updateInfo(applyMeta(msg.meta))
             is FromRadioMsg.Channel -> if (msg.role == 1) updateInfo(info.copy(primaryChannelName = msg.name))
             is FromRadioMsg.ConfigComplete -> if (msg.nonce == nonce) setState(RadioState.READY, "config received ($configItems items)")
-                else listeners.forEach { it.onDebugText("ignored config_complete_id ${msg.nonce} (waiting for $nonce)") }
+                else if (msg.nonce != NONCE_ONLY_CONFIG) listeners.forEach { it.onDebugText("ignored config_complete_id ${msg.nonce} (waiting for $nonce)") }
             is FromRadioMsg.Packet -> {
                 val rx = ReceivedPacket(msg.packet, clock.wallMs(), clock.monotonicMs(), state != RadioState.READY)
                 learnFromPacket(msg.packet)
@@ -224,6 +245,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         overrideFrequencyMhz = c.overrideFrequencyMhz?.toDouble(), txEnabled = c.txEnabled, hopLimit = c.hopLimit,
         modemPreset = c.modemPreset ?: 0, usePreset = c.usePreset, regionCode = c.region ?: 0, loraRaw = c.raw,
         frequencyOffsetMhz = c.frequencyOffsetMhz?.toDouble(), bandwidth = c.bandwidth, spreadFactor = c.spreadFactor, codingRate = c.codingRate,
+        txPowerDbm = c.txPower,
     )
 
     /** Re-requests the full config (used to confirm a configuration change). */

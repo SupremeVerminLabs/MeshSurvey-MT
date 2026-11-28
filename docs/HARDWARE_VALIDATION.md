@@ -93,7 +93,7 @@ USB GPS receiver with NMEA output.
 ## H. Position sources (radio GPS, Windows location)
 | ID | Check | Evidence |
 |---|---|---|
-| HV-64 | Windows base, radio with GPS fix (or a fixed position set in the radio), no other position source chosen: the app switches to "Radio's own GPS" by itself and receptions get the radio's position. On a public default channel (reduced precision) it refuses with the "too coarse" message instead | Screenshot of the status line; export showing source RADIO |
+| HV-64 | Windows base, radio with GPS fix (or a fixed position set in the radio), no other position source chosen: the app switches to "Radio's own GPS" by itself, shows "assumed stationary" and the position age, and receptions get the radio's full-precision position, **also on the default public channel** (it is read from the radio, not from its blurred broadcasts). Export shows source RADIO and position_age_ms | Screenshot of the status line; CSV columns fix_source, position_age_ms |
 | HV-65 | Windows laptop: "Windows location" gives positions with plausible accuracy while driving; with location turned off for desktop apps, the clear refusal message appears | Screenshot + exported track |
 
 ## Results table

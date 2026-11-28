@@ -8,6 +8,7 @@ import meshsurvey.core.radio.RadioClient
 import meshsurvey.core.radio.RadioListener
 import meshsurvey.core.sim.FromRadioEncoder
 import meshsurvey.core.util.ManualClock
+import meshsurvey.core.proto.f
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -30,12 +31,42 @@ class RadioGpsTest {
         assertTrue(r.status.contains("stationary"))
     }
 
-    @Test fun coarsePublicChannelPrecisionIsRefused() {
+    @Test fun blurredBroadcastIsNeverUsedAndNeverReplacesAGoodPosition() {
         val r = Rec(ManualClock())
-        r.src.onReport(pos(45.0, -75.0, bits = 13))         // ~2.9 km
+        r.src.onReport(pos(45.0, -75.0, bits = 13))         // ~2.9 km: the radio's own broadcast on a default channel
         r.clock.advance(1000); r.src.tick()
         assertTrue(r.fixes.isEmpty())
-        assertTrue(r.status.contains("too coarse"))
+        assertTrue(r.status.contains("blurred"))
+        r.src.onReport(pos(45.001, -75.0, bits = null, hdop = null, timeS = r.clock.wallMs() / 1000 - 30), fromConfig = true)   // full-precision NodeInfo
+        r.src.tick(); assertEquals(1, r.fixes.size)
+        r.src.onReport(pos(45.02, -75.0, bits = 13))        // later blurred broadcast, far off due to truncation
+        r.clock.advance(1000); r.src.tick()
+        assertEquals(2, r.fixes.size); assertEquals(45.001, r.fixes.last().lat)
+        assertTrue(r.status.contains("assumed stationary"))
+    }
+
+    @Test fun heldFixesCarryTheRealPositionTime() {
+        val c = ManualClock()
+        val r = Rec(c)
+        val tS = c.wallMs() / 1000 - 300
+        r.src.onReport(pos(45.0, -75.0, timeS = tS), fromConfig = true)
+        c.advance(1000); r.src.tick()
+        assertEquals(tS * 1000, r.fixes.last().positionTimeMs)
+        assertTrue(r.status.contains("5 min ago"))
+    }
+
+    @Test fun quietOwnInfoRequestUsesConfigOnlyNonceAndKeepsState() {
+        val rc = RadioClient(ManualClock())
+        val link = ProtocolTest.FakeLink(); rc.connect(link)
+        val n = meshsurvey.core.proto.Wire.parse(link.sent.last()).f(3)!!.u32
+        val l = link.listener!!
+        l.onFromRadio(FromRadioEncoder.myInfo(42)); l.onFromRadio(FromRadioEncoder.configComplete(n))
+        assertEquals(meshsurvey.core.radio.RadioState.READY, rc.state)
+        assertTrue(rc.requestOwnInfo())
+        assertEquals(69420L, meshsurvey.core.proto.Wire.parse(link.sent.last()).f(3)!!.u32)
+        l.onFromRadio(FromRadioEncoder.nodeInfo(42, "Me", "M", 0, 45.0, -75.0))
+        l.onFromRadio(FromRadioEncoder.configComplete(69420))
+        assertEquals(meshsurvey.core.radio.RadioState.READY, rc.state)   // never shown as "Syncing"
     }
 
     @Test fun movingRadioStopsAssertingUntilStationaryAgain() {

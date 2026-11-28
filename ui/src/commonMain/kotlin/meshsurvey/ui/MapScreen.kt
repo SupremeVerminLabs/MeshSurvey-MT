@@ -1,5 +1,7 @@
 package meshsurvey.ui
 
+import meshsurvey.core.quality.ConfidenceClass
+import meshsurvey.core.quality.ConfidenceRules
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -313,7 +315,11 @@ private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, onCl
                             Text("from ${names[o.fromNode]?.label ?: MeshEnums.nodeId(o.fromNode)} · RSSI ${o.rssi ?: "?"} · SNR ${o.snr?.let { fmt(it, 2) } ?: "?"} · " +
                                 "hops ${o.hopsAway ?: "?"} (${o.hopLimit ?: "?"}/${o.hopStart ?: "?"}) · relay ${o.relayByte?.let { "0x" + it.toString(16).padStart(2, '0') } ?: "?"}",
                                 fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                            Text("id ${o.packetId.toString(16)} · GPS ±${o.accuracyM?.let { fmt(it, 0) } ?: "?"} m, age ${o.fixAgeMs?.let { it / 1000 } ?: "?"} s · ${o.preset ?: "preset ?"} · " +
+                            val conf = ConfidenceRules.classify(o)
+                            Text(conf.cls.label + (if (conf.reasons.isEmpty()) "" else ": " + conf.reasons.joinToString("; ")), fontSize = 11.sp,
+                                color = when (conf.cls) { ConfidenceClass.VALID -> Color(0xFF2E7D32); ConfidenceClass.LIMITED -> Color(0xFF8D6E00); else -> Color(0xFFC62828) })
+                            Text("id ${o.packetId.toString(16)} · position ${o.fixSource?.lowercase() ?: "none"} ±${o.accuracyM?.let { fmt(it, 0) } ?: "?"} m, " +
+                                "age ${(o.positionAgeMs ?: o.fixAgeMs)?.let { a -> if (a >= 120_000) "${a / 60_000} min" else "${a / 1000} s" } ?: "?"} · ${o.preset ?: "preset ?"} · " +
                                 "${o.frequencyMhz?.let { fmt(it, 3) + " MHz " + (if (o.frequencySource == "CALCULATED") "calc." else "cfg.") } ?: "freq ?"} · ${o.source}" +
                                 (o.originDevice?.let { " · imported from $it" } ?: "") + (o.summary?.let { " · $it" } ?: ""), fontSize = 11.sp, color = Color.DarkGray)
                         }

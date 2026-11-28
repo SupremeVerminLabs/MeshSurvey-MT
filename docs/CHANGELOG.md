@@ -83,3 +83,31 @@ None at runtime. At build time: MSVC + Windows SDK on the GitHub Windows runner 
   `Default.h` smart-broadcast minimum 5 min, broadcast default 60 min. Master (2.8) adds `sendOurPositionToPhone` every 60 s.
 * Tests: `RadioGpsTest` (7) and `OsLocationTest` (1). Local core suite **92/92 pass**.
 * Unverified: U-65, U-66; hardware checks HV-64, HV-65.
+
+## Unreleased: spec round 5, steps 1–2 (audit; equipment profiles and position confidence), 2026-11-27
+
+### Step 1: audit
+Baseline: GitHub Actions run 46090544108 green (core-tests, android, windows incl. installed-app self-test). Local core suite 92/92.
+
+### Step 2: implemented
+* **Radio GPS without changing channel settings** (spec §15): firmware 2.7.26 source shows `want_config_id = 69420` (config only)
+  returns the radio's own NodeInfo with the full-precision position from its node database and no other nodes. While radio GPS is
+  the active source the app sends it once a minute (phone API only, no LoRa). Blurred over-the-air broadcasts are now ignored and
+  never replace a good position. Status says "assumed stationary" and shows how long ago the position was determined; each
+  observation stores `position_age_ms`. It never claims movement, only that "the position changed between reports".
+* **Confirm as fixed reference position**: copies the radio's current position into a user-confirmed fixed position (source
+  MANUAL), logged in the event log.
+* **Equipment profiles** (optional): all user-entered, unknown stays empty; one profile per session (changing it starts a new
+  session); radio-reported model/firmware/region/preset/configured TX power/frequency recorded per session, separately. Soft delete.
+  Included in export bundles (v2) and imported with their origin device.
+* **Measurement confidence** (derived, never alters data): Valid / Limited / Insufficient / Possibly misconfigured / Invalid for
+  aggregation, each with reasons; shown per reception in the map cell list and exported in CSV (`confidence`, `confidence_reasons`).
+* Schema v4 (see SCHEMA.md). CSV gains columns at the end (existing column order unchanged).
+
+### Tests that ran
+Local core suite (kotlinc, real SQLite incl. v4 migration): **102/102 pass**: new `EquipmentTest` (4), `ConfidenceTest` (4), 3 new radio GPS tests.
+UI compiled only on GitHub Actions (see build result below).
+
+### Deviations / not yet done
+* Sessions themselves are exported but not yet imported from other devices (needed for multi-device consolidation; step 4).
+* Transmit-power control (spec §7) is not started; only the configured value is read and recorded.

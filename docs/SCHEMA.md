@@ -68,3 +68,12 @@ v2 fields are optional additions, so older bundles still import; v1 status names
 import. Only rows recorded by the exporting install are included (no re-export of imported data). On
 import, `source` is preserved and `origin_device` is set to the bundle's origin. Importing your own
 bundle, or the same file twice, is refused.
+
+## v4 (equipment profiles, radio-reported session snapshot, position provenance)
+* `equipment_profile(id, origin_device, name, fields JSON, created_ms, updated_ms, deleted)`: user-entered only; soft-deleted so
+  sessions keep their reference; imported profiles keep their `origin_device`.
+* `survey_session` + `profile_id`, and values **reported by the radio** at session start: `hw_model`, `tx_power_dbm` (configured, not
+  measured; 0 = firmware default), `frequency_mhz`, `frequency_source`.
+* `observation` + `position_age_ms`: age of the underlying position at reception. Equals `fix_age_ms` for live GPS; for a
+  re-asserted stationary radio position it is the time since the radio determined that position.
+* Bundle format version 2 carries all of the above (v1 bundles still import).
