@@ -43,6 +43,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: ui-screens, path: screens/ }
+      - name: Print screens (base64, for review tools that cannot download artifacts)
+        if: always()
+        run: for f in screens/*.png; do echo "SCREEN-BEGIN $(basename $f)"; base64 -w 0 "$f"; echo; echo "SCREEN-END"; done
 
   android:
     runs-on: ubuntu-latest
