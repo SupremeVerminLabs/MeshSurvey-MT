@@ -40,6 +40,7 @@ Compact handoff file (kept current; details in `docs/`). Last updated 2026-11-27
 ## Pending (agreed order)
 1. Live two-radio comparison view. 2. Drive workflow (QR pairing, Start drive, optional Google Sheet sharing with opt-in,
    oddity tags, never simulated data). 3. Real-radio guided test session. Then compare workspace, replay, HTML reports.
+* Next major update (design agreed, not started): test suite with **adaptive pings** — see docs/ADAPTIVE_PINGS.md.
 * Requested for a later major update (not started): optional username to tag uploads + a basic top-5 contributor leaderboard
   (opt-in; needs a schema change in the sheet script and a public, privacy-safe leaderboard response).
 * Sidelined: SHORT_TURBO test default, multi-preset listen scan, Android keep-screen-on guidance, session list with delete,
