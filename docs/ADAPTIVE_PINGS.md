@@ -16,8 +16,10 @@ Recorded 2026-11-28 from the user's decisions. Part of the "test suite" directio
 4. **Settings:** "Adaptive pings" on/off, with user-set **minimum and maximum interval**.
    * Moving into untested squares: down to the minimum (15 s at the fastest) if allowed.
    * **Not moving, or in a square already tested this session:** never faster than **30 s**, and the interval grows by
-     **+50 % per ping** while it stays there (30 → 45 → 67 → 101 s …, up to the user's maximum), so the longer it sits the
-     fewer pings/traceroutes it sends.
+     **+50 % per ping** while it stays there, rounded to friendly values (30 s → 45 s → 1 min → 1.5 min → 2.5 min → 4 min →
+     6 min → 10 min → 15 min → 20 min → 30 min → 45 min → 1 h → 1.5 h → 2 h), up to a **fixed 2-hour cap that the user cannot
+     change**, so a node someone forgot to switch off sends almost nothing. The user's min/max settings apply only to the
+     moving / new-square case.
    * Entering a new square resets to an immediate ping.
 
 ## Also agreed in discussion
