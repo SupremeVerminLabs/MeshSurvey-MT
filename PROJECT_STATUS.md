@@ -43,6 +43,18 @@ Compact handoff file (kept current; details in `docs/`). Last updated 2026-11-27
 * Next major update (design agreed, not started): test suite with **adaptive pings** — see docs/ADAPTIVE_PINGS.md.
 * Requested for a later major update (not started): optional username to tag uploads + a basic top-5 contributor leaderboard
   (opt-in; needs a schema change in the sheet script and a public, privacy-safe leaderboard response).
+* **Community security hardening** (agreed 2026-11-28, do with the next update; script change needs a redeploy):
+  1. Fix spreadsheet formula injection: prefix text starting with = + - @ with ' in Code.gs `str_()` (oddity text,
+     equipment notes, any free text). Add a test.
+  2. Publish a tile only once ≥ 2 distinct submitters have contributed to it (protects lone contributors' trails).
+  3. Stop exposing other people's nodes: no raw zero-hop "mt:!id" in public aggregates (relay byte only, or IDs hashed
+     with a rotating key).
+  4. Reword "anonymous" → "pseudonymous; aggregated publicly" (Google sees IPs; submitter hash links one user's sessions).
+  5. Make poisoning harder: per-day caps per cell, outlier flags vs neighbours/predictions, review queue for new submitters,
+     quota-exhaustion guard (fail fast when daily quota is near).
+  6. Beacon DM restart only from approved nodes, with a nonce/replay check.
+  7. Release SHA-256 checksums; prompt to change the MeshCore default PIN; README note that the local DB is unencrypted.
+  (Later database move should keep these properties.)
 * Sidelined: SHORT_TURBO test default, multi-preset listen scan, Android keep-screen-on guidance, session list with delete,
   release checksums, TX power control, Site Planner auto-run, iOS review, GitHub Actions v5 updates.
 
