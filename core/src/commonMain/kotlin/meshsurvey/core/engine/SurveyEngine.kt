@@ -151,6 +151,9 @@ class SurveyEngine(
     private val _preset = MutableStateFlow<PresetChange?>(null)
     /** Open temporary preset change (any radio), or null. Surfaced as a persistent banner. */
     val presetChange: StateFlow<PresetChange?> = _preset
+    private val _ended = MutableStateFlow<String?>(null)
+    /** Id of the last survey session this radio finished (for the optional "contribute this session?" prompt). */
+    val lastEndedSession: StateFlow<String?> = _ended
     private val _dataVersion = MutableStateFlow(0L)
     val dataVersion: StateFlow<Long> = _dataVersion
 
@@ -316,7 +319,9 @@ class SurveyEngine(
             logger.radioReady = false
             windowStart?.let { store.insertWindow(LoggingWindow(it, clock.wallMs(), null, radio.info.myNodeNum)) }
             windowStart = null
+            val endedId = logger.session?.id
             logger.endSession(if (state == RadioState.DISCONNECTED) SessionStatus.ENDED else SessionStatus.INTERRUPTED)
+            endedId?.let { _ended.value = it }
             event("Radio ${state.name.lowercase()}: $detail; logging session closed")
         }
         if (state == RadioState.READY) {

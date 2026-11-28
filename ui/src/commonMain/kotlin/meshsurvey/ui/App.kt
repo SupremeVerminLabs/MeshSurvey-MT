@@ -84,13 +84,19 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
 
     private val placesLazy by lazy { platform.loadPlaces() }
 
-    /** Optional community sharing (real data only: uses the station's real database, never the simulation database). */
-    val uploader by lazy { meshsurvey.core.community.Uploader(station.store, station.primary.appVersion) }
-    var communityStatus by mutableStateOf(uploader.lastResult ?: "")
+    /** Community contributions (real data only: the station's real database, never the simulation database). */
+    val contributions by lazy { meshsurvey.core.community.Contributions(station.store, station.primary.appVersion) }
+    var communityStatus by mutableStateOf("")
+    /** Manual community-map refresh requests (Legend → Refresh), and what the map last reported. */
+    var communityRefresh by mutableStateOf(0)
+    var communityRefreshSeen = 0
+    var communityMapInfo by mutableStateOf("")
+    /** Session waiting for the end-of-session "contribute?" prompt. */
+    var promptSession by mutableStateOf<String?>(null)
     fun localDay(ms: Long) = platform.formatDateTime(ms).take(10)
     fun ownNodes(): Set<Long> = station.receivers.value.mapNotNull { it.radio.info.myNodeNum }.toSet()
-    /** Uploads now; blocking network, so call from a background coroutine. */
-    fun uploadCommunity(): String = uploader.upload(station.clock.wallMs(), ::localDay, ownNodes()) { u, b -> platform.httpPost(u, b) }
+    /** Uploads or resumes one session; blocking network, so call from a background coroutine. */
+    fun uploadSession(id: String): String = contributions.upload(id, ::localDay, ownNodes(), station.clock.wallMs()) { u, b -> platform.httpPost(u, b) }
         .also { m -> communityStatus = m; engine.event("Community: $m") }
     /** Offline place names, loaded once on first use (call off the UI thread). */
     fun places(): meshsurvey.core.history.Places? = placesLazy
@@ -153,11 +159,25 @@ fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boo
         }
     }
     LaunchedEffect(Unit) { if (model.gpsOption == null) platform.defaultGps()?.let { model.startGps(it) } }
-    // Auto-upload (only when the user turned sharing and auto-upload on): every 30 min, off the UI thread.
+    // End of a real session: offer to contribute it (only if the user wants to be asked and it has not been decided).
+    val receiversNow by station.receivers.collectAsState()
+    receiversNow.filter { !station.isSimulated(it) }.forEach { e ->
+        val ended by e.lastEndedSession.collectAsState()
+        LaunchedEffect(ended) {
+            val id = ended ?: return@LaunchedEffect
+            val c = model.contributions
+            if (c.settings.destination != meshsurvey.core.community.Destination.OFF && c.settings.promptAfterSession && !c.settings.autoUpload &&
+                c.status(id) == null && model.promptSession == null) model.promptSession = id
+        }
+    }
+    // Auto-upload (only when the user gave the standing permission in Settings), off the UI thread.
     if (runTickLoop) LaunchedEffect(Unit) {
         while (true) {
             delay(60_000)
-            if (model.uploader.autoDue(station.clock.wallMs())) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { model.uploadCommunity() }
+            // only with the user's standing permission; one session per minute at most, failed ones wait for their retry time
+            model.contributions.autoCandidates(station.clock.wallMs()).firstOrNull()?.let { id ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { model.uploadSession(id) }
+            }
         }
     }
     // No position source chosen (typical for a Windows base station) and the radio knows where it is:
@@ -192,6 +212,7 @@ fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boo
                 }
             }
             if (showSettings) SettingsDialog(model) { showSettings = false }
+            model.promptSession?.let { id -> ContributionDialog(model, id, afterSession = true) { model.promptSession = null } }
            }
           }
         }

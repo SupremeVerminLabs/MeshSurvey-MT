@@ -6,7 +6,7 @@ Compact handoff file (kept current; details in `docs/`). Last updated 2026-11-27
 * Versions come from CI: `0.1.<run number>` on `main`, tags `v*` make releases. Unsigned MSI (decision: stay unsigned for now).
 * CI (`.github/workflows/build.yml`): core tests (Gradle, real SQLite), Android APK, Windows MSI + installed-app self-test,
   **screens** (renders the real UI with simulated data at phone/desktop sizes, dark/light; PNGs as artifact and base64 in the log).
-* Local quick check: `tools/verify-core.sh` (kotlinc + Python SQLite bridge) — 142 tests.
+* Local quick check: `tools/verify-core.sh` (kotlinc + Python SQLite bridge) — 149 tests; `node tools/community/test.js` for the sheet script.
 
 ## Implemented
 * Passive logging (Meshtastic phone API) over USB serial, TCP, Android BLE, Windows BLE (own C++/WinRT helper); several radios
@@ -19,6 +19,8 @@ Compact handoff file (kept current; details in `docs/`). Last updated 2026-11-27
 * Coverage prediction: Site Planner GeoJSON import, per-cell measured vs predicted (agree/stronger/weaker/heard-not-predicted/
   passed-not-heard), summary with denominators.
 * History tab: days named by date + main place (offline GeoNames, CC BY 4.0); a day opens the map limited to that day.
+* Community sharing v2 (docs/COMMUNITY.md): per-session explicit contributions to a Google Sheet (default destination built in),
+  statuses/receipts/withdrawal, privacy zones, review-safe sheet layout, cached community map layer. Not yet run against the live sheet.
 * Radio GPS accuracy: last broadcast DOP kept 24 h, persisted per radio, also taken from a second radio hearing the broadcast.
 * UI: dark theme default, Light/System in Settings; phone-width layout below 600 dp (wrapping top bar, compact monitor columns,
   collapsible panels).

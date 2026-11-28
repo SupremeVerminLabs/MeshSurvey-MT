@@ -154,18 +154,21 @@ fun MapScreen(model: UiModel) {
     val textMeasurer = rememberTextMeasurer()
     var pickNodes by remember { mutableStateOf(false) }
     var predDialog by remember { mutableStateOf(false) }
-    // Community squares: fetched off the UI thread for the area around the map centre, refreshed when the map moves far.
+    // Community squares: from the local cache first, refreshed off the UI thread (at most hourly per area, or on demand).
     var community by remember { mutableStateOf<List<meshsurvey.core.community.Community.CommunityCell>>(emptyList()) }
-    val cLat = kotlin.math.round(Mercator.lat(model.map.cy) * 10) / 10; val cLon = kotlin.math.round(Mercator.lon(model.map.cx) * 10) / 10
-    LaunchedEffect(f.showCommunity, cLat, cLon) {
-        val ep = model.uploader.settings.endpoint
-        if (!f.showCommunity || ep.isBlank()) { community = emptyList(); return@LaunchedEffect }
-        community = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            runCatching {
-                meshsurvey.core.community.Community.parseAggregate(model.platform.httpGet(
-                    "$ep?action=aggregate&lat0=${cLat - 0.3}&lat1=${cLat + 0.3}&lon0=${cLon - 0.4}&lon1=${cLon + 0.4}"))
-            }.onFailure { model.engine.event("Community squares could not be loaded: ${it.message}") }.getOrDefault(emptyList())
+    val cLat = kotlin.math.round(Mercator.lat(model.map.cy) * 5) / 5; val cLon = kotlin.math.round(Mercator.lon(model.map.cx) * 5) / 5
+    LaunchedEffect(f.showCommunity, cLat, cLon, model.communityRefresh) {
+        val cs = model.contributions.settings
+        if (!f.showCommunity || cs.destination == meshsurvey.core.community.Destination.OFF || !cs.downloadMap) { community = emptyList(); return@LaunchedEffect }
+        val area = "$cLat,$cLon"
+        community = model.contributions.cachedMap(area).cells
+        val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            model.contributions.refreshMap(area, "${cs.endpoint}?action=aggregate&lat0=${cLat - 0.3}&lat1=${cLat + 0.3}&lon0=${cLon - 0.4}&lon1=${cLon + 0.4}",
+                model.station.clock.wallMs(), force = model.communityRefresh > model.communityRefreshSeen, maxAgeMs = 3_600_000) { u -> model.platform.httpGet(u) }
         }
+        model.communityRefreshSeen = model.communityRefresh
+        community = r.cells
+        model.communityMapInfo = (r.fetchedMs?.let { "updated ${model.platform.formatDateTime(it).substring(5, 16)}" } ?: "not downloaded yet") + (r.message?.let { " · $it" } ?: "")
     }
     Column(Modifier.fillMaxSize()) {
         FilterBar(model, data?.presets ?: emptyList(), { predDialog = true }) { pickNodes = true }
@@ -226,12 +229,15 @@ fun MapScreen(model: UiModel) {
                         if (c.direct > 0 && sz.width > 10) drawRect(Color(0xFF0B3D0B), tl, sz, style = Stroke(2f))
                     }
                     if (f.showCommunity) for (c in community) {
+                        if (f.protocol != null && c.protocol != f.protocol) continue
+                        if (f.preset != null && c.preset != f.preset) continue
+                        if (c.n == 0) continue
                         val p = proj.toOffset(c.lat, c.lon)
                         if (p.x < -20 || p.y < -20 || p.x > size.width + 20 || p.y > size.height + 20) continue
                         val half = ((meshsurvey.core.community.Community.CELL_M / 2) / proj.metersPerPx(c.lat)).toFloat().coerceAtLeast(2.5f)
                         val col = c.snrMedian?.let { argb(Scales.snr(it)) } ?: Color.Gray
                         drawRect(col.copy(alpha = 0.55f), Offset(p.x - half, p.y - half), Size(2 * half, 2 * half))
-                        if (c.flagged) drawRect(Color(0xFFFF6F00), Offset(p.x - half, p.y - half), Size(2 * half, 2 * half), style = Stroke(1.5f))
+                        if (c.pendingReview > 0) drawRect(Color(0xFFFF6F00), Offset(p.x - half, p.y - half), Size(2 * half, 2 * half), style = Stroke(1.5f))
                     }
                     if (f.showTrack && d.track.size > 1) {
                         val path = Path()
@@ -321,7 +327,7 @@ fun MapScreen(model: UiModel) {
             val compact = LocalCompact.current
             var legend by remember(compact, f.predictionId) { mutableStateOf(!compact && f.predictionId == null) }
             Column(Modifier.align(Alignment.BottomStart).padding(8.dp)) {
-                if (legend) Legend(f, data, Modifier.padding(bottom = 4.dp))
+                if (legend) Legend(model, f, data, Modifier.padding(bottom = 4.dp))
                 androidx.compose.material3.FilledTonalButton(onClick = { legend = !legend },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
                     Text(if (legend) "Hide legend" else "Legend", fontSize = 12.sp)
@@ -475,7 +481,7 @@ fun Menu(label: String, items: List<Pair<String, () -> Unit>>) {
 }
 
 @Composable
-private fun Legend(f: MapFilter, d: MapData?, modifier: Modifier) {
+private fun Legend(model: UiModel, f: MapFilter, d: MapData?, modifier: Modifier) {
     Column(modifier.widthIn(max = 300.dp).background(Pal.overlay, RoundedCornerShape(6.dp)).padding(6.dp)) {
         if (f.protocol == null && d != null && d.heardCounts.keys.any { it.startsWith("mc:") } && d.heardCounts.keys.any { it.startsWith("mt:") })
             Text("Both protocols shown: coverage only, not a like-for-like comparison", fontSize = 10.sp, color = Pal.warn)
@@ -485,7 +491,11 @@ private fun Legend(f: MapFilter, d: MapData?, modifier: Modifier) {
             groups.forEach { g -> LegendRow(argb(Heard.color(g)), Heard.label(g, d.known) + " · ${d.heardCounts[g] ?: 0}") }
             if ((f.heardGroups?.size ?: d.heardCounts.size) > 8) Text("…", fontSize = 10.sp)
         }
-        if (f.showCommunity) Text("Community squares: shared median SNR (same colours); orange outline = flagged", fontSize = 10.sp, color = Pal.muted)
+        if (f.showCommunity) Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Community (trusted median SNR; orange outline = more awaiting review) · ${model.communityMapInfo}", fontSize = 10.sp, color = Pal.muted,
+                modifier = Modifier.weight(1f, fill = false))
+            TextButton(onClick = { model.communityRefresh++ }) { Text("Refresh", fontSize = 11.sp) }
+        }
         if (f.showKnown) Text("▲ repeater  ■ other node, at its advertised position (grey = not heard directly yet)", fontSize = 10.sp, color = Pal.muted)
         if (!f.showGrid) return@Column
         if (d?.cmp != null && f.compare) {

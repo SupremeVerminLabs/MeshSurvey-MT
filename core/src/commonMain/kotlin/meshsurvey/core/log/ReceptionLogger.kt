@@ -70,7 +70,7 @@ class ReceptionLogger(
         session?.let { endSession() }
         val fq = FrequencyCalc.from(info)
         val s = SurveySession(
-            id = newId(), startedMs = clock.wallMs(), endedMs = null, status = SessionStatus.ACTIVE,
+            id = meshsurvey.core.util.newUuid(), startedMs = clock.wallMs(), endedMs = null, status = SessionStatus.ACTIVE,
             receiverNode = info.myNodeNum, linkKind = info.linkKind?.name, firmware = info.firmware,
             preset = info.preset, region = info.region, source = source,
             profileId = profileId, hwModel = info.hwModel, txPowerDbm = info.txPowerDbm,

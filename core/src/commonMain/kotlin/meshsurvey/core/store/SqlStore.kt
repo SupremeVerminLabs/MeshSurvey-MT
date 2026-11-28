@@ -176,6 +176,15 @@ object Schema {
             """CREATE TABLE prediction(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, file_name TEXT, imported_ms INTEGER NOT NULL,
                 geojson TEXT NOT NULL, target TEXT)""",
         ),
+        // v9 — community contributions per session and destination (frozen upload parts, receipts, private withdrawal token),
+        // and the cached community map
+        listOf(
+            """CREATE TABLE contribution(session_id TEXT NOT NULL, destination TEXT NOT NULL, status TEXT NOT NULL, session_key TEXT NOT NULL,
+                parts_json TEXT, acked TEXT NOT NULL DEFAULT '', accepted_cells INTEGER NOT NULL DEFAULT 0, cells INTEGER NOT NULL DEFAULT 0,
+                receipt TEXT, delete_token TEXT, uploaded_ms INTEGER, error TEXT, next_retry_ms INTEGER, updated_ms INTEGER NOT NULL,
+                PRIMARY KEY(session_id, destination))""",
+            """CREATE TABLE community_cache(area TEXT PRIMARY KEY, json TEXT NOT NULL, version TEXT, fetched_ms INTEGER NOT NULL)""",
+        ),
     )
     val version get() = migrations.size
 }
@@ -334,6 +343,37 @@ class SqlStore(private val db: SqlDriver) : Store {
             meshsurvey.core.history.HistObs(r.long(0)!!, r.double(1), r.double(2), r.long(3)!!, r.double(4), r.long(5), r.string(6),
                 r.string(7) ?: "meshtastic", Source.valueOf(r.string(8)!!))
         }
+
+    // ---------------- community contributions ----------------
+
+    fun contribution(sessionId: String, destination: String): meshsurvey.core.community.Contribution? =
+        db.query("""SELECT session_id,destination,status,session_key,parts_json,acked,accepted_cells,cells,receipt,delete_token,uploaded_ms,error,
+            next_retry_ms,updated_ms FROM contribution WHERE session_id=? AND destination=?""", listOf(sessionId, destination)) { r -> contributionFrom(r) }.firstOrNull()
+
+    fun contributions(destination: String): Map<String, meshsurvey.core.community.Contribution> =
+        db.query("""SELECT session_id,destination,status,session_key,parts_json,acked,accepted_cells,cells,receipt,delete_token,uploaded_ms,error,
+            next_retry_ms,updated_ms FROM contribution WHERE destination=?""", listOf(destination)) { r -> contributionFrom(r) }.associateBy { it.sessionId }
+
+    private fun contributionFrom(r: SqlRow) = meshsurvey.core.community.Contribution(r.string(0)!!, r.string(1)!!,
+        meshsurvey.core.community.ContributionStatus.valueOf(r.string(2)!!), r.string(3)!!, r.string(4), r.string(5).orEmpty().split(',').mapNotNull { it.toIntOrNull() }.toSet(),
+        r.int(6) ?: 0, r.int(7) ?: 0, r.string(8), r.string(9), r.long(10), r.string(11), r.long(12), r.long(13)!!)
+
+    fun saveContribution(c: meshsurvey.core.community.Contribution) {
+        db.execute("""INSERT OR REPLACE INTO contribution(session_id,destination,status,session_key,parts_json,acked,accepted_cells,cells,receipt,delete_token,
+            uploaded_ms,error,next_retry_ms,updated_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            listOf(c.sessionId, c.destination, c.status.name, c.sessionKey, c.partsJson, c.acked.sorted().joinToString(","), c.acceptedCells, c.cells,
+                c.receipt, c.deleteToken, c.uploadedMs, c.error, c.nextRetryMs, c.updatedMs))
+    }
+
+    fun deleteContribution(sessionId: String, destination: String) {
+        db.execute("DELETE FROM contribution WHERE session_id=? AND destination=?", listOf(sessionId, destination))
+    }
+
+    fun communityCache(area: String): Triple<String, String?, Long>? =
+        db.query("SELECT json,version,fetched_ms FROM community_cache WHERE area=?", listOf(area)) { Triple(it.string(0)!!, it.string(1), it.long(2)!!) }.firstOrNull()
+    fun saveCommunityCache(area: String, json: String, version: String?, fetchedMs: Long) {
+        db.execute("INSERT OR REPLACE INTO community_cache(area,json,version,fetched_ms) VALUES(?,?,?,?)", listOf(area, json, version, fetchedMs))
+    }
 
     // ---------------- per-session management ----------------
 

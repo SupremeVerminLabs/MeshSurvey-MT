@@ -167,8 +167,9 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                     "For offline areas use a raster MBTiles file (PNG/JPEG/WebP; vector .pbf MBTiles are not supported), your own tile server, " +
                     "or a local file:// {z}/{x}/{y} folder.", fontSize = 11.sp, color = Pal.muted)
                 }
-                Fold("Community sharing", model.uploader.settings.let { c -> if (!c.enabled) "off" else if (c.autoUpload) "on · auto upload" else "on · manual" }, open, { open = it }) {
-                    CommunitySection(model)
+                Fold("Community", model.contributions.settings.let { c -> if (c.destination == meshsurvey.core.community.Destination.OFF) "off"
+                    else c.destinationLabel + if (c.autoUpload) " · auto upload" else " · upload when you choose" }, open, { open = it }) {
+                    CommunitySettings(model)
                 }
                 Fold("Data", "export, import, sessions, delete", open, { open = it }) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -184,6 +185,9 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                     msg = r.error ?: if (r.duplicateFile) "Already imported" else "Imported ${r.observations} observations, ${r.track} track points, ${r.testTx} tests, ${r.testRx} test receptions"
                 } } }) { Text("Import JSON bundle…") }
                 SessionList(model)
+                var contrib by remember { mutableStateOf(false) }
+                TextButton(onClick = { contrib = !contrib }) { Text(if (contrib) "Hide community status" else "Community upload status…") }
+                if (contrib) SessionContributions(model, model.station.store.sessions().take(30))
                 if (!confirmDelete) TextButton(onClick = { confirmDelete = true }) { Text("Delete all logged data…", color = Pal.bad) }
                 else Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Delete everything except registered devices?", modifier = Modifier.weight(1f), fontSize = 12.sp)
@@ -249,67 +253,3 @@ private fun SessionList(model: UiModel) {
     }
 }
 
-/** Opt-in community sharing to a Google Sheet (tools/community/Code.gs). Nothing is sent unless the first switch is on. */
-@Composable
-private fun CommunitySection(model: UiModel) {
-    val up = model.uploader
-    var s by remember { mutableStateOf(up.settings) }
-    fun set(n: meshsurvey.core.community.ShareSettings) { s = n; up.update(n) }
-    val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var preview by remember { mutableStateOf<String?>(null) }
-    var odd by remember { mutableStateOf("") }
-    Text("Shares anonymous summaries: per ~37 m square (1/3 acre) and day, the preset, how many packets, typical and best " +
-        "SNR/RSSI and which node they were heard from. Never: your device or radio IDs, exact times or points, message contents, " +
-        "simulated data, or anything inside your home zone. Odd values are shared with a tag. Everything stays saved on this device too.",
-        fontSize = 11.sp, color = Pal.muted)
-    SwitchRow("Share to community anonymously", s.enabled) { set(s.copy(enabled = it)) }
-    OutlinedTextField(s.endpoint, { set(s.copy(endpoint = it.trim())) }, label = { Text("Community sheet address (Apps Script web-app URL)") },
-        singleLine = true, modifier = Modifier.fillMaxWidth())
-    SwitchRow("Include measurements", s.includeMeasurements) { set(s.copy(includeMeasurements = it)) }
-    SwitchRow("Include oddity reports", s.includeOddities) { set(s.copy(includeOddities = it)) }
-    SwitchRow("Upload automatically (every 30 min while the app runs)", s.autoUpload) { set(s.copy(autoUpload = it)) }
-    SwitchRow("Home privacy zone (${s.homeRadiusM.toInt()} m, never shared)", s.homeZoneOn) { set(s.copy(homeZoneOn = it)) }
-    if (s.homeZoneOn) {
-        Text(if (s.homeLat != null) "Home zone set (${fmt(s.homeLat!!, 3)}, ${fmt(s.homeLon!!, 3)})" else "Home zone not set yet: uploads wait until it is.",
-            fontSize = 12.sp, color = if (s.homeLat != null) Pal.muted else Pal.warn)
-        val fix = model.engine.fix.collectAsState().value
-        OutlinedButton(enabled = fix != null, onClick = { fix?.let { set(s.copy(homeLat = it.lat, homeLon = it.lon)) } }) {
-            Text("Set home zone to the current position")
-        }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton(onClick = {
-            val p = up.preview(model.station.clock.wallMs(), model::localDay, model.ownNodes())
-            preview = "${p.rows.size} squares ready (${p.rows.sumOf { it.n }} receptions). Left out: ${p.excluded.homeZone} in home zone, " +
-                "${p.excluded.noPosition} without position, ${p.excluded.simulatedOrImported} simulated/imported, ${p.excluded.late} late, ${p.excluded.mock} mock GPS." +
-                p.rows.take(3).joinToString("") { r -> "\n${r.day} ${r.preset} ${r.heardFrom} n=${r.n} SNR ${r.snrMedian ?: "?"} ${r.flags.joinToString(";")}" }
-        }) { Text("Preview") }
-        Button(enabled = s.enabled && !busy, onClick = {
-            busy = true
-            scope.launch { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { model.uploadCommunity() }; busy = false }
-        }) { Text(if (busy) "Uploading…" else "Upload now") }
-    }
-    preview?.let { Text(it, fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace) }
-    if (model.communityStatus.isNotBlank()) Text("Last: ${model.communityStatus}", fontSize = 12.sp, color = Pal.muted)
-    OutlinedTextField(odd, { odd = it }, label = { Text("Report something odd (sent with today's date and your rough position)") },
-        modifier = Modifier.fillMaxWidth())
-    OutlinedButton(enabled = odd.isNotBlank() && s.enabled, onClick = {
-        val fx = model.engine.fix.value; val text = odd
-        scope.launch {
-            val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                up.reportOddity(text, fx?.lat, fx?.lon, model.localDay(model.station.clock.wallMs())) { u, b -> model.platform.httpPost(u, b) }
-            }
-            model.communityStatus = r; if (r == "Report sent") odd = ""
-        }
-    }) { Text("Send report") }
-    Text("Set-up: docs/COMMUNITY.md (a private Google Sheet + the script in tools/community).", fontSize = 11.sp, color = Pal.muted)
-}
-
-@Composable
-private fun SwitchRow(label: String, on: Boolean, set: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 13.sp, modifier = Modifier.weight(1f))
-        Switch(on, set)
-    }
-}

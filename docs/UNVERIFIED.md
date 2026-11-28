@@ -85,3 +85,4 @@ Everything below is not yet verified. Each item names the check that closes it.
 | U-70 | MeshCore Bluetooth companion radios advertise or expose the Nordic UART service, pair with the PIN on screen (or 123456), and deliver one frame per notification | HV-68 |
 | U-71 | MeshCore SELF_INFO / CONTACT / DEVICE_INFO field offsets match the firmware version in use (built from the published companion protocol, not captured traffic) | HV-66 — name, frequency and contact positions shown correctly |
 | U-72 | The Site Planner's current GeoJSON export has nested MultiPolygon bands with a numeric `dbm` property, as in its source (`src/map/contours.ts`) | HV-70 |
+| U-73 | The community script (schema 2) behaves on Google's servers as in the Node stand-in: POST redirect handling, LockService, batched writes, `since` caching, withdrawal | HV-71 |

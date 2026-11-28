@@ -35,6 +35,14 @@ object Geo {
 fun newId(random: Random = Random.Default, bytes: Int = 8): String =
     (0 until bytes).joinToString("") { random.nextInt(256).toString(16).padStart(2, '0') }
 
+/** Random (version 4) UUID, e.g. for survey sessions: permanent, kept through export/import, never reused. */
+fun newUuid(random: Random = Random.Default): String {
+    val b = ByteArray(16) { random.nextInt(256).toByte() }
+    b[6] = ((b[6].toInt() and 0x0f) or 0x40).toByte(); b[8] = ((b[8].toInt() and 0x3f) or 0x80).toByte()
+    val h = b.toHex()
+    return "${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}"
+}
+
 fun ByteArray.toHex() = joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 fun String.hexToBytes(): ByteArray? {
     if (length % 2 != 0) return null

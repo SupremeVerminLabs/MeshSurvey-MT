@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,6 +45,7 @@ fun HistoryScreen(model: UiModel) {
     var days by remember { mutableStateOf<List<DayRecord>?>(null) }
     var refresh by remember { mutableStateOf(0) }
     var open by remember { mutableStateOf<DayRecord?>(null) }
+    var sessionsOpen by remember { mutableStateOf(false) }
     val store = model.engine.store
 
     LaunchedEffect(store, refresh) {
@@ -64,7 +67,16 @@ fun HistoryScreen(model: UiModel) {
                     Text(dayTitle(model, d), fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
                     Text(daySummary(model, d), fontSize = 11.sp, color = Pal.muted, maxLines = 2)
                 }
+                if (!d.simulated) TextButton(onClick = { sessionsOpen = true }) { Text("Sessions") }
             }
+            if (sessionsOpen) androidx.compose.material3.AlertDialog(onDismissRequest = { sessionsOpen = false },
+                confirmButton = { TextButton(onClick = { sessionsOpen = false }) { Text("Close") } },
+                title = { Text("Sessions on this day") },
+                text = {
+                    Column(Modifier.androidxVerticalScroll()) {
+                        SessionContributions(model, store.sessions().filter { it.startedMs <= d.lastMs && (it.endedMs ?: Long.MAX_VALUE) >= d.firstMs })
+                    }
+                })
             MapScreen(model)
         }
         return
@@ -119,3 +131,6 @@ private fun zoomFor(b: DoubleArray): Double {
     val span = max(b[3] - b[2], (b[1] - b[0]) * 1.4).coerceAtLeast(0.002)
     return (ln(600.0 / 256 * 360 / span) / ln(2.0) - 0.3).coerceIn(3.0, 16.0)
 }
+
+@Composable
+private fun Modifier.androidxVerticalScroll(): Modifier = this.heightIn(max = 480.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())

@@ -3,6 +3,22 @@
 Verification status keys: **Implemented** · **Compiled** (by a real compiler; says where) · **Simulator tested** ·
 **Integration tested** · **Hardware tested** (physical radio; says which) · **Unverified**.
 
+## Unreleased: Community sharing v2 — per-session contributions, receipts, review, 2026-11-27
+
+**Kotlin unit tests (149) and Node script tests pass locally; compiled by CI. Not verified against the live Google deployment.**
+
+* Sharing is per survey session with explicit consent: end-of-session summary prompt (Upload / Keep local only / Don't ask
+  again), Upload/Resume/Withdraw for older sessions (Settings → Data, History → Sessions), persistent per-destination status
+  (Not uploaded … Withdrawn) with date, accepted squares and receipts. Automatic upload is a separate permission, off by default.
+* Default destination = the project's sheet (built in); Custom or Off. Map download is independent of contributing; cached per
+  area, hourly refresh or manual Refresh, `since` version avoids re-downloading.
+* Session UUIDs (v4) for new sessions; older ids kept. Server-side key = hash of the UUID; stable batch ids; frozen parts;
+  duplicate-safe resume and cross-device import; script lock; size and rate limits; backoff 30 min → 24 h.
+* Multiple privacy zones (250/500/1000 m), required before the first contribution; optional coarse equipment categories.
+* Script schema 2: `contributions`, `reviews` tabs; invalid rows refused to `oddities` with original JSON; flagged rows kept
+  with original values and excluded from trusted statistics until reviewed; corrections recorded separately; withdrawal by
+  private token (hash only uploaded); public GET returns aggregates only. `setup()` keeps older-layout tabs aside.
+
 ## Unreleased: Community sharing (Google Sheet), roomier phone Monitor, 2026-11-27
 
 **Unit tested (145 Kotlin tests + script tests in Node); compiled by CI; not yet run against a real Google Sheet.**
