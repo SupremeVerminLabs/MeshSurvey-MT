@@ -23,6 +23,7 @@ import meshsurvey.core.model.PacketType
 import meshsurvey.core.model.RxStatus
 import meshsurvey.core.model.Source
 import meshsurvey.core.model.SurveySession
+import meshsurvey.core.model.SessionStatus
 import meshsurvey.core.model.TestMode
 import meshsurvey.core.model.TestRole
 import meshsurvey.core.model.TestRx
@@ -146,7 +147,7 @@ object Bundle {
             put("exported_ms", nowMs); put("origin_device", originDevice)
             put("contains_simulated", (obs.any { it.source == Source.SIMULATED } || tx.any { it.source == Source.SIMULATED }))
             put("notes", "Stock Meshtastic firmware suppresses duplicate receptions; each observation is the first copy delivered to the client.")
-            put("sessions", JsonArray(sessions.map { s -> buildJsonObject {
+            put("sessions", JsonArray(sessions.filter { it.originDevice == null }.map { s -> buildJsonObject {
                 put("id", s.id); put("started_ms", s.startedMs); put("ended_ms", s.endedMs); put("status", s.status.name)
                 put("receiver_node", s.receiverNode); put("link_kind", s.linkKind); put("firmware", s.firmware)
                 put("preset", s.preset); put("region", s.region); put("source", s.source.name)
@@ -229,6 +230,16 @@ object Bundle {
                         source = src(o), originDevice = origin, frequencySource = o.s("frequency_source"), fixSource = o.s("fix_source"),
                         positionAgeMs = o.l("position_age_ms")))
                     if (id > 0) nObs++ else skipped++
+                } catch (_: Exception) { skipped++ }
+            }
+            root.arr("sessions").forEach { e -> val s = e.jsonObject
+                try {
+                    store.insertSession(SurveySession(id = s.s("id")!!, startedMs = s.l("started_ms")!!, endedMs = s.l("ended_ms"),
+                        status = s.s("status")?.let { v -> runCatching { SessionStatus.valueOf(v) }.getOrNull() } ?: SessionStatus.ENDED,
+                        receiverNode = s.l("receiver_node"), linkKind = s.s("link_kind"), firmware = s.s("firmware"),
+                        preset = s.s("preset"), region = s.s("region"), source = src(s), duplicatesSuppressed = s.b("duplicates_suppressed") ?: true,
+                        notes = s.s("notes"), profileId = s.s("profile_id"), hwModel = s.i("hw_model"), txPowerDbm = s.i("tx_power_dbm"),
+                        frequencyMhz = s.d("frequency_mhz"), frequencySource = s.s("frequency_source"), originDevice = origin))
                 } catch (_: Exception) { skipped++ }
             }
             root.arr("equipment_profiles").forEach { e ->

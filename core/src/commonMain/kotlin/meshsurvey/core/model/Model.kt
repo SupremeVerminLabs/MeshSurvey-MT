@@ -97,6 +97,8 @@ data class SurveySession(
     val txPowerDbm: Int? = null,
     val frequencyMhz: Double? = null,
     val frequencySource: String? = null,
+    /** Device that recorded the session; null = this device. */
+    val originDevice: String? = null,
 )
 
 /** One physical reception reported by the connected radio. Never merged by packet id. */

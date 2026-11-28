@@ -23,7 +23,7 @@ class EquipmentTest {
 
     @Test fun profilesArePersistedWithUnknownsKeptUnknown() {
         val h = Harness()
-        assertEquals(4, Schema.version)
+        assertTrue(Schema.version >= 4)
         h.engine.saveProfile(rooftop)
         h.engine.saveProfile(EquipmentProfile("p2", "Car"))
         val got = h.store.profiles().associateBy { it.id }
@@ -72,5 +72,10 @@ class EquipmentTest {
         val imported = b.store.profiles().single()
         assertEquals("p1", imported.id); assertEquals(a.engine.deviceId, imported.originDevice)
         assertTrue(b.store.observations().single().positionAgeMs != null)
+        val imported2 = b.store.sessions().filter { it.originDevice == a.engine.deviceId }
+        assertEquals(2, imported2.size)                                    // the profile change started a second session
+        assertTrue(imported2.any { it.profileId == "p1" } && imported2.any { it.profileId == null })
+        b.store.recoverInterrupted(b.clock.wallMs())                       // crash recovery never touches imported sessions
+        assertEquals(imported2.map { it.status }.toSet(), b.store.sessions().filter { it.originDevice == a.engine.deviceId }.map { it.status }.toSet())
     }
 }

@@ -119,3 +119,18 @@ UI compiled only on GitHub Actions: run 46093944819 **all jobs green** (core-tes
   (many ESP32 boards restart when the port opens), the app re-requests its configuration 3 s after the output stops instead
   of waiting 20 s. Test `radioThatRebootsOnPortOpenIsAskedAgainAfterBootOutput`. Core suite 103/103.
 * Windows signing: user chose to stay unsigned for now (options documented in WINDOWS_BUILD.md).
+
+## Unreleased: comparison + RF health engine (additional spec, step 1 of 4), 2026-11-27
+Order agreed with the user: engine → Windows Compare workspace (map, replay) → HTML reports → themes (with CI-rendered screenshots).
+Data path: files first (export/import), live sync later.
+* **Sessions import from other devices** (schema v5: `survey_session.origin_device`); crash recovery and session ending
+  only touch this device's own sessions.
+* **Paired comparison** (`PairCompare`): matches by sender + packet id; classes Both / Reference only / Mobile only /
+  Other receiver unavailable / Incompatible settings / Ambiguous; explicit denominators; positions only from recorded
+  track points within 10 s; clock offset estimate; receiver separation.
+* **Equipment comparison** (`EquipmentCompare`): same-sender, same-100 m-cell strata; medians, percentiles, IQR; dB
+  differences with deterministic 95% intervals; automatic limitations.
+* **RF health** (`Health`): solo, historical and paired rules with evidence, baseline, sample count, confidence,
+  alternatives, inspection and caveats. Rules documented in HEALTH_RULES.md.
+* Tests: `AnalysisTest` (11) + session import checks. Core suite 114/114.
+* Not yet: UI for any of this (next step), HTML report, themes.

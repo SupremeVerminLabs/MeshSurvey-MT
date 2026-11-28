@@ -146,6 +146,10 @@ object Schema {
             """ALTER TABLE survey_session ADD COLUMN frequency_source TEXT""",
             """ALTER TABLE observation ADD COLUMN position_age_ms INTEGER""",
         ),
+        // v5 — sessions imported from other devices (for multi-device comparison)
+        listOf(
+            """ALTER TABLE survey_session ADD COLUMN origin_device TEXT NOT NULL DEFAULT ''""",
+        ),
     )
     val version get() = migrations.size
 }
@@ -178,23 +182,24 @@ class SqlStore(private val db: SqlDriver) : Store {
 
     override fun insertSession(s: SurveySession) {
         db.execute("""INSERT OR IGNORE INTO survey_session(id,started_ms,ended_ms,status,receiver_node,link_kind,firmware,preset,region,source,duplicates_suppressed,notes,
-            profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source,origin_device)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             listOf(s.id, s.startedMs, s.endedMs, s.status.name, s.receiverNode, s.linkKind, s.firmware, s.preset, s.region,
-                s.source.name, b(s.duplicatesSuppressed), s.notes, s.profileId, s.hwModel, s.txPowerDbm, s.frequencyMhz, s.frequencySource))
+                s.source.name, b(s.duplicatesSuppressed), s.notes, s.profileId, s.hwModel, s.txPowerDbm, s.frequencyMhz, s.frequencySource,
+                o(s.originDevice)))
     }
 
     override fun endSession(id: String, endedMs: Long, status: SessionStatus) {
-        db.execute("UPDATE survey_session SET ended_ms=?, status=? WHERE id=?", listOf(endedMs, status.name, id))
+        db.execute("UPDATE survey_session SET ended_ms=?, status=? WHERE id=? AND origin_device=''", listOf(endedMs, status.name, id))
     }
 
     override fun sessions(): List<SurveySession> = db.query(
         "SELECT id,started_ms,ended_ms,status,receiver_node,link_kind,firmware,preset,region,source,duplicates_suppressed,notes," +
-            "profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source FROM survey_session ORDER BY started_ms DESC"
+            "profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source,origin_device FROM survey_session ORDER BY started_ms DESC"
     ) { r ->
         SurveySession(r.string(0)!!, r.long(1)!!, r.long(2), SessionStatus.valueOf(r.string(3)!!), r.long(4), r.string(5),
             r.string(6), r.string(7), r.string(8), Source.valueOf(r.string(9)!!), r.long(10) == 1L, r.string(11),
-            r.string(12), r.int(13), r.int(14), r.double(15), r.string(16))
+            r.string(12), r.int(13), r.int(14), r.double(15), r.string(16), un(r.string(17)))
     }
 
     // ---------------- equipment profiles ----------------
@@ -217,7 +222,7 @@ class SqlStore(private val db: SqlDriver) : Store {
         val n = db.execute("""UPDATE survey_session SET status='INTERRUPTED',
             ended_ms=COALESCE((SELECT MAX(rx_ms) FROM observation WHERE session_id=survey_session.id),
                               (SELECT MAX(ms) FROM track_point WHERE session_id=survey_session.id), started_ms)
-            WHERE status='ACTIVE'""")
+            WHERE status='ACTIVE' AND origin_device=''""")
         val t = db.execute("""UPDATE test_session SET end_reason='interrupted (app closed or crashed)',
             ended_ms=COALESCE((SELECT MAX(sent_ms) FROM test_tx WHERE test_session_id=test_session.id AND test_tx.origin_device=test_session.origin_device), started_ms)
             WHERE ended_ms IS NULL AND origin_device='' AND role='A_SURVEY'""")
