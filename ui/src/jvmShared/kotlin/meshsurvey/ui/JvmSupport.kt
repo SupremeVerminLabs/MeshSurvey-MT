@@ -81,19 +81,20 @@ object Http {
 
     private fun request(start: String, method: String, body: String?): String {
         var url = start; var m = method; var b = body
-        repeat(5) {
+        for (attempt in 0 until 5) {
             val c = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
                 instanceFollowRedirects = false; connectTimeout = 15_000; readTimeout = 30_000; requestMethod = m
                 setRequestProperty("User-Agent", "MeshSurvey (community sharing)")
                 if (b != null) { doOutput = true; setRequestProperty("Content-Type", "application/json") }
             }
             try {
-                if (b != null) c.outputStream.use { it.write(b.encodeToByteArray()) }
+                val sendBody = b
+                if (sendBody != null) c.outputStream.use { it.write(sendBody.encodeToByteArray()) }
                 val code = c.responseCode
                 if (code in 300..399) {
                     url = c.getHeaderField("Location") ?: throw java.io.IOException("redirect without location")
                     if (code != 307 && code != 308) { m = "GET"; b = null }
-                    return@repeat
+                    continue
                 }
                 val text = (if (code < 400) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
                 if (code >= 400) throw java.io.IOException("HTTP $code ${text.take(120)}")
