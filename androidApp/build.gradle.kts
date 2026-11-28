@@ -39,6 +39,8 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
+    // Bundled data shared with desktop (offline place names for the History tab).
+    sourceSets["main"].assets.srcDir(rootProject.file("data/resources"))
 }
 
 dependencies {

@@ -72,25 +72,28 @@ fun MonitorScreen(model: UiModel) {
                 Text(listOfNotNull(info.preset, info.myNodeNum?.let { MeshEnums.nodeId(it) }, "logged ${stats.logged}",
                     "with position ${stats.withPosition}", m0?.batteryText?.let { "power $it" }).joinToString(" · "), fontSize = 13.sp)
                 if (details) {
-                Text("Node ${info.myNodeNum?.let { MeshEnums.nodeId(it) } ?: "?"} · ${info.linkKind?.label ?: "no link"} · firmware ${info.firmware ?: "?"}")
                 val fq = remember(info) { FrequencyCalc.from(info) }
-                Text("Preset ${info.preset ?: "?"} · region ${info.region ?: "?"} · ${fq.params?.label ?: "LoRa parameters unknown"}")
-                Text("Frequency: ${fq.label}", fontSize = 13.sp)
-                if (fq.source == FreqSource.CALCULATED) Text("Calculated by this app from region, preset, slot and channel name using the firmware formula; " +
-                    "the radio does not report its frequency.", fontSize = 11.sp, color = Pal.muted)
-                Text("Position: ${fix?.let { "${fmt(it.lat, 5)}, ${fmt(it.lon, 5)} · ${gpsLabel(it, engine)} · ${it.source}" } ?: "no fix (receptions are logged without position)"} · ${model.gpsStatus}")
-                Text("Logged ${stats.logged} · with position ${stats.withPosition} · encrypted ${stats.encrypted} · queued/late ${stats.queuedLate} · " +
-                    "skipped: own ${stats.skippedOwn}, via MQTT ${stats.skippedMqtt}", fontSize = 13.sp)
                 val m by engine.radioMetrics.collectAsState()
                 val timing by engine.timing.collectAsState()
-                Text("Reported by radio: " + (m?.let { "transmitting ${it.airUtilTxPct?.let { v -> fmt(v, 1) } ?: "?"} %, channel busy ${it.channelUtilPct?.let { v -> fmt(v, 1) } ?: "?"} %" }
-                    ?: "no airtime report yet") + " · rejected GPS fixes ${stats.rejectedFixes}", fontSize = 13.sp)
-                Text("Power (reported by radio): " + (m?.batteryText?.let { "$it · as of ${model.platform.formatTime(m!!.wallMs)}" }
-                    ?: "not reported yet (sent with the radio's device telemetry, typically every 30–60 min)"), fontSize = 13.sp)
-                if (timing.tickGaps > 0 || timing.clockJumps > 0) Text("Timing: app suspended ${timing.tickGaps}× (longest ${timing.longestGapMs / 1000} s), " +
-                    "clock changed ${timing.clockJumps}× — recorded with the data", fontSize = 12.sp, color = Pal.warn)
-                Text("Stock firmware drops duplicate copies before they reach the app: each row is the first copy your node received. " +
-                    "Duplicate receptions are not observed and are not estimated.", fontSize = 11.sp, color = Pal.muted)
+                Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Info("Radio", listOfNotNull(info.myNodeNum?.let { MeshEnums.nodeId(it) }, info.linkKind?.label, info.firmware?.let { "firmware $it" },
+                        if (info.protocol == meshsurvey.core.radio.MeshProtocol.MESHCORE) "MeshCore (listen-only)" else null).joinToString(" · ").ifEmpty { "not connected" })
+                    Info("Channel", listOfNotNull(info.preset, info.region, fq.params?.label).joinToString(" · ").ifEmpty { "unknown" })
+                    Info("Frequency", fq.label + if (fq.source == FreqSource.CALCULATED) " (calculated from region, preset and channel name; the radio doesn't report it)" else "")
+                    Info("Position", fix?.let { "${gpsLabel(it, engine, model)} · ${fmt(it.lat, 5)}, ${fmt(it.lon, 5)}" } ?: "none yet: receptions are logged without position")
+                    if (model.gpsStatus.isNotBlank()) Info("", model.gpsStatus, muted = true)
+                    Info("Logged", "${stats.logged} receptions · ${stats.withPosition} with position · ${stats.encrypted} encrypted · ${stats.queuedLate} queued/late" +
+                        (if (stats.skippedOwn + stats.skippedMqtt > 0) " · skipped ${stats.skippedOwn} own, ${stats.skippedMqtt} MQTT" else "") +
+                        (if (stats.rejectedFixes > 0) " · ${stats.rejectedFixes} GPS fixes rejected" else ""))
+                    Info("Airtime", m?.let { "radio transmitting ${it.airUtilTxPct?.let { v -> fmt(v, 1) } ?: "?"} %, channel busy ${it.channelUtilPct?.let { v -> fmt(v, 1) } ?: "?"} %" }
+                        ?: "not reported yet")
+                    Info("Power", m?.batteryText?.let { "$it (as of ${model.platform.formatTime(m!!.wallMs)})" }
+                        ?: "not reported yet (comes with the radio's telemetry, about every 30–60 min)")
+                    if (timing.tickGaps > 0 || timing.clockJumps > 0) Info("Timing", "app suspended ${timing.tickGaps}× (longest ${timing.longestGapMs / 1000} s), " +
+                        "clock changed ${timing.clockJumps}×; recorded with the data", warn = true)
+                    Text("Each row below is the first copy your radio received; firmware drops duplicates before the app sees them.",
+                        fontSize = 11.sp, color = Pal.muted)
+                }
                 }
             }
         }
@@ -147,3 +150,13 @@ fun MonitorScreen(model: UiModel) {
 
 @Composable
 private fun Cell(s: String, w: Int) = Text(s, fontSize = 12.sp, fontFamily = FontFamily.Monospace, maxLines = 1, modifier = Modifier.width(w.dp))
+
+/** One label/value line of the status details. */
+@Composable
+private fun Info(label: String, value: String, muted: Boolean = false, warn: Boolean = false) {
+    Row {
+        Text(label, fontSize = 12.sp, color = Pal.muted, modifier = Modifier.width(76.dp))
+        Text(value, fontSize = if (muted) 11.sp else 13.sp, color = when { warn -> Pal.warn; muted -> Pal.muted; else -> androidx.compose.ui.graphics.Color.Unspecified },
+            modifier = Modifier.weight(1f))
+    }
+}

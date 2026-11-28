@@ -170,6 +170,9 @@ class AndroidPlatform(private val app: Context, private val engine: SurveyEngine
     override suspend fun tileBytes(url: String, offlineOnly: Boolean) = tiles.bytes(url, offlineOnly)
     override fun formatTime(ms: Long) = Formats.time(ms)
     override fun formatDateTime(ms: Long) = Formats.dateTime(ms)
+    override fun formatDay(ms: Long) = Formats.day(ms)
+    override fun utcOffsetMs(ms: Long) = Formats.utcOffsetMs(ms)
+    override fun loadPlaces() = runCatching { Formats.places(app.assets.open("places/places.tsv.gz")) }.getOrNull()
 
     /** Started on the user's Connect (app visible, so Android allows it) and kept through reconnects until Disconnect. */
     override fun onSurveyActive(active: Boolean) {

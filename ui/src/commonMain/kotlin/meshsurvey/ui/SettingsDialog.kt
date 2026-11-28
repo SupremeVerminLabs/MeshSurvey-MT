@@ -1,5 +1,7 @@
 package meshsurvey.ui
 
+import androidx.compose.foundation.clickable
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -51,26 +53,28 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
     var manualAcc by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
     var summaries by remember { mutableStateOf(engine.logger.config.storeSummaries) }
+    var open by remember { mutableStateOf<String?>(null) }
 
 
     AlertDialog(onDismissRequest = onClose, confirmButton = { TextButton(onClick = onClose) { Text("Done") } },
         title = { Text("Settings") },
         text = {
-            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Section("Appearance")
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
+                msg?.let { Text(it, color = Pal.warn, fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp)) }
+                Fold("Appearance", model.theme.label, open, { open = it }) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ThemeMode.entries.forEach { t -> androidx.compose.material3.FilterChip(model.theme == t, { model.updateTheme(t) }, { Text(t.label) }) }
                 }
-                Section("Radio connection")
+                }
+                Fold("Radios", activeReceivers(model).joinToString { it.radioLabel() }.ifEmpty { "no radio connected" }, open, { open = it }) {
                 ConnectionSection(model)
-                msg?.let { Text(it, color = Pal.bad, fontSize = 12.sp) }
-
-                Section("Receiver position (GPS)")
+                }
+                Fold("Position source", (model.gpsOption?.label ?: "off") + " · " + gpsLabel(engine.fix.collectAsState().value, engine, model), open, { open = it }) {
                 Text(model.gpsStatus, fontSize = 13.sp)
                 (listOf(RADIO_GPS_OPTION) + platform.gpsOptions()).forEach { g ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(g.label); g.note?.let { Text(it, fontSize = 11.sp, color = Pal.muted) }
+                            Text(g.label); if (model.gpsOption?.id == g.id) g.note?.let { Text(it, fontSize = 11.sp, color = Pal.muted) }
                         }
                         Button(onClick = {
                             val manual = if (g.needsManual) {
@@ -97,11 +101,11 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                         "the confirmation is recorded in the event log.", fontSize = 11.sp, color = Pal.muted)
                 }
                 if (model.gpsOption != null) OutlinedButton(onClick = { model.stopGps() }) { Text("Stop GPS") }
-
-                Section("Equipment profile (optional)")
+                }
+                Fold("Equipment profile", engine.profiles.collectAsState().value.firstOrNull { it.id == engine.activeProfileId.collectAsState().value }?.name ?: "none", open, { open = it }) {
                 EquipmentSection(model)
-
-                Section("Transmissions by this app")
+                }
+                Fold("Transmissions (RX-only)", (if (model.station.shared.rxOnly.collectAsState().value) "RX-only" else "tests allowed") + " · ${engine.appTx.collectAsState().value.count} sent", open, { open = it }) {
                 val rxOnly by model.station.shared.rxOnly.collectAsState()
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("RX-only mode", modifier = Modifier.weight(1f))
@@ -113,22 +117,22 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                 val tx by engine.appTx.collectAsState()
                 Text("This session: ${tx.count} transmission(s) requested by the app on ${engine.radioLabel()}, " +
                     "estimated ${fmt(tx.estAirtimeMs / 1000, 1)} s airtime (first transmissions only; ACK retries can add up to 2 more each).", fontSize = 12.sp)
-
-                Section("Background logging")
+                }
+                Fold("Background logging", "screen-off logging, battery", open, { open = it }) {
                 Text("While a radio is connected, logging continues with the screen locked (Android shows a notification). " +
                     "Automated test sessions stop when the app leaves the screen.", fontSize = 12.sp)
                 OutlinedButton(onClick = { if (!platform.openBatterySettings()) msg = "Not needed on this platform" }) {
                     Text("Battery settings (allow unrestricted background use)")
                 }
-
-                Section("Logging")
+                }
+                Fold("Logging", if (summaries) "packet summaries on" else "packet summaries off", open, { open = it }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(summaries, { summaries = it; engine.setLoggerConfig(engine.logger.config.copy(storeSummaries = it)) })
                     Text("  Store decoded summaries of non-text packets (telemetry, node info). Off by default. Text message contents are never stored.",
                         fontSize = 12.sp)
                 }
-
-                Section("Map tiles")
+                }
+                Fold("Map tiles", if (model.tiles.offlineOnly) "offline only" else model.tiles.attribution, open, { open = it }) {
                 OutlinedTextField(model.tiles.urlTemplate, { model.tiles.urlTemplate = it; model.tiles.clearMemory() },
                     label = { Text("Tile URL template ({z}/{x}/{y}); file:// for a local tile folder") }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -162,8 +166,8 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                 Text("Viewed online tiles are cached for offline use. Bulk downloading from tile.openstreetmap.org is not allowed by its usage policy. " +
                     "For offline areas use a raster MBTiles file (PNG/JPEG/WebP; vector .pbf MBTiles are not supported), your own tile server, " +
                     "or a local file:// {z}/{x}/{y} folder.", fontSize = 11.sp, color = Pal.muted)
-
-                Section("Data")
+                }
+                Fold("Data", "export, import, sessions, delete", open, { open = it }) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { platform.saveText("meshsurvey-observations.csv", "text/csv", Csv.observations(engine.store.observations())) { msg = it?.let { p -> "Saved $p" } } }) { Text("CSV") }
                     OutlinedButton(onClick = { platform.saveText("meshsurvey-tests.csv", "text/csv", Csv.tests(engine.store.testTx())) { msg = it?.let { p -> "Saved $p" } } }) { Text("Tests CSV") }
@@ -183,19 +187,29 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                     TextButton(onClick = { engine.store.clearAll(); confirmDelete = false; msg = "All logged data deleted" }) { Text("Delete", color = Pal.bad) }
                     TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
                 }
-
-                Section("About")
+                }
+                Fold("About", "${engine.appVersion} · schema v${engine.store.schemaVersion()}", open, { open = it }) {
                 Text("MeshSurvey ${engine.edition} ${engine.appVersion} on ${platform.platformName} · device id ${engine.deviceId} · database schema v${engine.store.schemaVersion()}", fontSize = 12.sp)
                 Text("Passive by default: this app only transmits when you start a controlled test to a device you registered. " +
                     "Map colours show measurements only; nothing is interpolated.", fontSize = 12.sp, color = Pal.muted)
+                }
             }
         })
 }
 
+/** One settings group: a header line with the current state; tapping opens it (one group open at a time). */
 @Composable
-private fun Section(t: String) {
-    HorizontalDivider(Modifier.padding(top = 6.dp))
-    Text(t, fontWeight = FontWeight.Bold)
+private fun Fold(title: String, summary: String, open: String?, setOpen: (String?) -> Unit, content: @Composable () -> Unit) {
+    val isOpen = open == title
+    HorizontalDivider(color = Pal.divider)
+    Row(Modifier.fillMaxWidth().clickable { setOpen(if (isOpen) null else title) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Bold)
+            if (!isOpen) Text(summary, fontSize = 12.sp, color = Pal.muted, maxLines = 1)
+        }
+        Text(if (isOpen) "▾" else "▸", color = Pal.muted)
+    }
+    if (isOpen) Column(Modifier.padding(start = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
 }
 
 /** Selects the simulated GPS when the simulated radio is connected and no GPS is active. */

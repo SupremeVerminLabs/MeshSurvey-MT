@@ -27,7 +27,7 @@ import kotlin.math.sin
  */
 object Screens {
     private data class Shot(val name: String, val wDp: Int, val hDp: Int, val density: Float, val tab: Tab, val theme: ThemeMode,
-                            val startOpen: Boolean = false, val prediction: Boolean = false, val heard: Boolean = false)
+                            val startOpen: Boolean = false, val prediction: Boolean = false, val heard: Boolean = false, val settings: Boolean = false)
 
     fun run(out: File): Int {
         out.mkdirs()
@@ -67,12 +67,15 @@ object Screens {
             Shot("desktop-map-prediction-light", 1280, 800, 1f, Tab.MAP, ThemeMode.LIGHT, prediction = true),
             Shot("desktop-monitor-dark", 1280, 800, 1f, Tab.MONITOR, ThemeMode.DARK, startOpen = true),
             Shot("narrow-monitor-dark", 760, 640, 1f, Tab.MONITOR, ThemeMode.DARK, startOpen = true),
+            Shot("phone-history-dark", 412, 892, 2f, Tab.HISTORY, ThemeMode.DARK),
+            Shot("desktop-history-light", 1280, 800, 1f, Tab.HISTORY, ThemeMode.LIGHT),
+            Shot("phone-settings-dark", 412, 892, 2f, Tab.MAP, ThemeMode.DARK, settings = true),
         )
         var failures = 0
         for (s in shots) {
             try {
                 val scene = ImageComposeScene((s.wDp * s.density).toInt(), (s.hDp * s.density).toInt(), Density(s.density)) {
-                    MeshSurveyApp(station, platform, runTickLoop = false, initialTab = s.tab) { m ->
+                    MeshSurveyApp(station, platform, runTickLoop = false, initialTab = s.tab, initialSettings = s.settings) { m ->
                         m.engine = sim
                         m.theme = s.theme
                         m.startOpen = s.startOpen
@@ -81,7 +84,7 @@ object Screens {
                         m.centeredOnce = true
                     }
                 }
-                repeat(6) { scene.render(System.nanoTime()); Thread.sleep(300) }
+                repeat(10) { scene.render(System.nanoTime()); Thread.sleep(400) }   // history reads and names places in the background
                 val img = scene.render(System.nanoTime())
                 File(out, s.name + ".png").writeBytes(img.encodeToData(EncodedImageFormat.PNG)!!.bytes)
                 scene.close()

@@ -71,7 +71,9 @@ class SurveyEngine(
 
     val radio = RadioClient(clock)
     /** The connected radio's own position as a receiver position source (stationary receivers). */
-    val radioGps = RadioGpsSource(clock)
+    val radioGps = RadioGpsSource(clock).also { g -> g.onQuality = { q -> radio.info.myNodeNum?.let { n -> store.setMeta("gps_quality:$n", q) } } }
+    /** Set by [Station]: a position packet heard from another node (used to pass DOP to the radio it came from). */
+    var onPositionHeard: ((from: Long, pos: PositionInfo) -> Unit)? = null
     private val _radioPosition = MutableStateFlow<PositionInfo?>(null)
     /** Latest position the radio reported about itself (null = none yet). */
     val radioPosition: StateFlow<PositionInfo?> = _radioPosition
@@ -317,7 +319,10 @@ class SurveyEngine(
             logger.endSession(if (state == RadioState.DISCONNECTED) SessionStatus.ENDED else SessionStatus.INTERRUPTED)
             event("Radio ${state.name.lowercase()}: $detail; logging session closed")
         }
-        if (state == RadioState.READY) { backoffMs = 5_000; presets.onConfig(radio.info) }
+        if (state == RadioState.READY) {
+            backoffMs = 5_000; presets.onConfig(radio.info)
+            radio.info.myNodeNum?.let { n -> radioGps.restoreQuality(store.getMeta("gps_quality:$n")) }
+        }
         if ((state == RadioState.DISCONNECTED || state == RadioState.FAILED) && !switching && linkFactory != null && reconnectAtMono == null)
             scheduleReconnect(detail)
         ab.onRadioState(state)
@@ -354,6 +359,8 @@ class SurveyEngine(
         val p = rx.packet
         if (p.from == radio.info.myNodeNum && p.portnum == meshsurvey.core.proto.Port.TELEMETRY)
             p.payload?.let { pl -> runCatching { meshsurvey.core.proto.MeshProto.decodeTelemetryDeviceMetrics(pl) }.getOrNull()?.let { updateMetrics(it) } }
+        if (p.portnum == meshsurvey.core.proto.Port.POSITION && p.from != radio.info.myNodeNum)
+            onPositionHeard?.let { cb -> p.payload?.let { pl -> meshsurvey.core.proto.MeshProto.decodePositionInfo(pl)?.let { cb(p.from, it) } } }
         logger.onPacket(rx, radio.info)
         ab.onPacket(rx)
         reference.onPacket(rx, radio.info.myNodeNum)

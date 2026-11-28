@@ -45,11 +45,17 @@ class Station(
     val shared = SharedState(store)
     val primary = SurveyEngine(store, clock, edition, appVersion, configBackups = configBackups, primary = true, shared = shared)
     private val _receivers = MutableStateFlow(listOf(primary))
+
+    /** A radio's position broadcast heard by another connected radio carries its DOP and satellites: pass them on. */
+    private fun wire(e: SurveyEngine) = e.apply {
+        onPositionHeard = { from, pos -> _receivers.value.firstOrNull { it !== e && it.radio.info.myNodeNum == from }?.radioGps?.onQualityHeard(pos) }
+    }
+    init { wire(primary) }
     val receivers: StateFlow<List<SurveyEngine>> = _receivers
 
     /** A new, unconnected engine for one more radio. */
     fun addReceiver(): SurveyEngine {
-        val e = SurveyEngine(store, clock, edition, appVersion, configBackups = configBackups, primary = false, shared = shared)
+        val e = wire(SurveyEngine(store, clock, edition, appVersion, configBackups = configBackups, primary = false, shared = shared))
         _receivers.value = _receivers.value + e
         return e
     }

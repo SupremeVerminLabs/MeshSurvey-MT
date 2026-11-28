@@ -194,6 +194,9 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
     override suspend fun tileBytes(url: String, offlineOnly: Boolean) = tiles.bytes(url, offlineOnly)
     override fun formatTime(ms: Long) = Formats.time(ms)
     override fun formatDateTime(ms: Long) = Formats.dateTime(ms)
+    override fun formatDay(ms: Long) = Formats.day(ms)
+    override fun utcOffsetMs(ms: Long) = Formats.utcOffsetMs(ms)
+    override fun loadPlaces() = runCatching { Formats.places(DesktopPlatform::class.java.getResourceAsStream("/places/places.tsv.gz")) }.getOrNull()
 }
 
 /** Meshtastic over USB serial (115200 8N1), using jSerialComm. */

@@ -62,6 +62,12 @@ interface PlatformServices {
     fun onSurveyActive(active: Boolean) {}
     /** Opens the OS setting that exempts the app from battery optimisation; false if not applicable. */
     fun openBatterySettings(): Boolean = false
+    /** The local time zone's offset from UTC at [ms] (for grouping history by calendar day). */
+    fun utcOffsetMs(ms: Long): Long = 0
+    /** "Sat 27 Nov 2026" in local time. */
+    fun formatDay(ms: Long): String = formatDateTime(ms).take(10)
+    /** Offline place names (bundled GeoNames extract) for naming history days; null if unavailable. Slow: call off the UI thread. */
+    fun loadPlaces(): meshsurvey.core.history.Places? = null
     /** Default GPS source to start automatically (phone GPS on Android), or null. */
     fun defaultGps(): GpsOption? = null
 }

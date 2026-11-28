@@ -50,7 +50,7 @@ import meshsurvey.core.model.FixSource
 import meshsurvey.core.model.Source
 import meshsurvey.core.radio.RadioState
 
-enum class Tab(val label: String) { MAP("Map"), MONITOR("Monitor"), TEST("Test") }
+enum class Tab(val label: String) { MAP("Map"), MONITOR("Monitor"), HISTORY("History"), TEST("Test") }
 
 /** UI-wide state that outlives tab switches. */
 class UiModel(val station: Station, val platform: PlatformServices, scope: CoroutineScope) {
@@ -81,6 +81,10 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
         engine.store.predictionGeoJson(id)?.let { meshsurvey.core.map.PredictionMap.parse(it, "prediction").first }
     }
     fun forgetPrediction(id: Long) { predictionCache.remove(id) }
+
+    private val placesLazy by lazy { platform.loadPlaces() }
+    /** Offline place names, loaded once on first use (call off the UI thread). */
+    fun places(): meshsurvey.core.history.Places? = placesLazy
     /** The start panel stays open until a radio is connected and the user picked what to do. */
     var startOpen by mutableStateOf(true)
 
@@ -117,12 +121,12 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
  */
 @Composable
 fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boolean, initialTab: Tab = Tab.MAP,
-                  onModel: (UiModel) -> Unit = {}) {
+                  initialSettings: Boolean = false, onModel: (UiModel) -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val model = remember { UiModel(station, platform, scope).also(onModel) }
     val engine = model.engine
     var tab by remember { mutableStateOf(initialTab) }
-    var showSettings by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(initialSettings) }
 
     // 1 Hz engine tick (heartbeats, test scheduling, ACK timeouts, simulator) on the UI thread.
     if (runTickLoop) LaunchedEffect(Unit) {
@@ -160,6 +164,7 @@ fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boo
                     when (tab) {
                         Tab.MAP -> MapScreen(model)
                         Tab.MONITOR -> MonitorScreen(model)
+                        Tab.HISTORY -> HistoryScreen(model)
                         Tab.TEST -> TestScreen(model)
                     }
                 }
@@ -202,7 +207,7 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
                     maxLines = 1, modifier = Modifier.background(radioColor(st.state), RoundedCornerShape(10.dp)).clickable { model.engine = e }
                         .padding(horizontal = 8.dp, vertical = 2.dp))
             }
-            Chip(gpsLabel(fix, engine), if (fix != null) ChipColors.good else ChipColors.idle)
+            Chip(gpsLabel(fix, engine, model), if (fix != null) ChipColors.good else ChipColors.idle)
             if (simulated) Chip("SIMULATED", ChipColors.alarm)
             val rxOnly by model.station.shared.rxOnly.collectAsState()
             // Always visible: whether this app may transmit. Tap to change (with an explanation in Settings).
@@ -238,11 +243,19 @@ fun radioColor(s: RadioState) = when (s) {
     else -> ChipColors.busy
 }
 
-fun gpsLabel(fix: Fix?, engine: SurveyEngine): String {
+fun gpsLabel(fix: Fix?, engine: SurveyEngine, model: UiModel? = null): String {
     fix ?: return "No GPS"
     val age = (engine.logger.fixAgeMs(fix) ?: 0) / 1000
-    val acc = fix.accuracyM?.let { "±${it.toInt()} m" } ?: "accuracy unknown"
-    return if (age > 10) "GPS stale ${age}s" else "GPS $acc"
+    if (age > 10) return "GPS stale ${age}s"
+    return when (fix.source) {
+        // A stationary radio's GPS: accuracy comes only with its position broadcasts, so say what is known instead of "unknown".
+        FixSource.RADIO -> {
+            val g = (model?.radioGpsEngine ?: engine).radioGps
+            "Radio GPS " + (g.shortAccuracy ?: fix.accuracyM?.let { "±${it.toInt()} m" } ?: g.satellites?.let { "· $it sats" } ?: "· accuracy pending")
+        }
+        FixSource.MANUAL -> "Fixed position" + (fix.accuracyM?.let { " ±${it.toInt()} m" } ?: "")
+        else -> "GPS " + (fix.accuracyM?.let { "±${it.toInt()} m" } ?: "accuracy not reported")
+    }
 }
 
 /** Always visible while a temporary preset change is open, until the radio is confirmed back on its original config. */
@@ -288,7 +301,7 @@ fun StartPanel(model: UiModel, onChoose: (Tab, meshsurvey.core.model.TestRole?) 
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("2  GPS", fontWeight = FontWeight.Bold, modifier = Modifier.width(80.dp))
-                Text(if (fix != null) gpsLabel(fix, engine) else model.gpsStatus + " — receptions are logged without position until a fix arrives",
+                Text(if (fix != null) gpsLabel(fix, engine, model) else model.gpsStatus + " — receptions are logged without position until a fix arrives",
                     fontSize = 13.sp, modifier = Modifier.weight(1f))
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -39,7 +39,24 @@ class RadioGpsSource(private val clock: Clock) {
 
         /** Rough horizontal error from HDOP (firmware sends HDOP x 100) assuming ~5 m user range error. */
         fun hdopErrorM(hdop: Int?): Double? = hdop?.takeIf { it > 0 }?.let { it / 100.0 * 5.0 }
+
+        /**
+         * How long a DOP/satellite report stays usable for a stationary radio. The radio sends DOP only in its own position
+         * broadcasts (every 15 min to several hours with default settings; its NodeInfo, read every minute, carries none),
+         * and a fixed antenna's sky view changes little, so the last known value is kept for a day and shown with its age.
+         */
+        const val QUALITY_MAX_AGE_MS = 24 * 3_600_000L
+
+        fun encodeQuality(dopX100: Int, sats: Int?, wallMs: Long) = "$dopX100,${sats ?: ""},$wallMs"
+        fun decodeQuality(s: String?): Triple<Int, Int?, Long>? {
+            val p = s?.split(",") ?: return null
+            if (p.size != 3) return null
+            return Triple(p[0].toIntOrNull() ?: return null, p[1].toIntOrNull(), p[2].toLongOrNull() ?: return null)
+        }
     }
+
+    /** Called with each new DOP report so it can be kept across restarts (per radio). */
+    var onQuality: ((String) -> Unit)? = null
 
     private var enabled = false
     private var onFix: ((Fix) -> Unit)? = null
@@ -67,11 +84,42 @@ class RadioGpsSource(private val clock: Clock) {
     /** Forget everything about the previous radio (call on connect/disconnect). */
     fun reset() { held = null; heldAccuracy = null; heldReceivedWallMs = null; lastReport = null; lastReportWallMs = null; moving = false; status() }
 
-    /** Accuracy estimate from the DOP in the radio's last broadcast, if within the last hour (null otherwise). */
+    /** Accuracy estimate from the DOP in the radio's last position broadcast, if within [QUALITY_MAX_AGE_MS] (null otherwise). */
     private fun dopAccuracy(): Double? {
         val t = lastQualityWallMs ?: return null
-        if (clock.wallMs() - t > 3_600_000) return null
+        if (clock.wallMs() - t > QUALITY_MAX_AGE_MS) return null
         return hdopErrorM(lastDopX100)
+    }
+
+    /** Satellites in view from the last broadcast (same age limit), for display. */
+    val satellites: Int? get() = lastSats?.takeIf { lastQualityWallMs?.let { clock.wallMs() - it <= QUALITY_MAX_AGE_MS } == true }
+
+    /** Short state for the top bar: "±8 m", "fixed", or null while accuracy is not known yet. */
+    val shortAccuracy: String? get() = when {
+        held?.locationSource == 1 -> "fixed"
+        heldAccuracy != null -> "±${heldAccuracy!!.roundToInt()} m"
+        dopAccuracy() != null -> "≈±${dopAccuracy()!!.roundToInt()} m"
+        else -> null
+    }
+
+    private fun setQuality(dopX100: Int, sats: Int?, wallMs: Long) {
+        lastDopX100 = dopX100; lastSats = sats; lastQualityWallMs = wallMs
+    }
+
+    /** A DOP report remembered from an earlier run (from [onQuality]); ignored if too old. */
+    fun restoreQuality(saved: String?) {
+        val (d, s, t) = decodeQuality(saved) ?: return
+        if (clock.wallMs() - t <= QUALITY_MAX_AGE_MS && (lastQualityWallMs ?: 0) < t) { setQuality(d, s, t); status() }
+    }
+
+    /**
+     * DOP and satellites from a copy of this radio's position broadcast heard by ANOTHER connected radio over the air.
+     * The position there may be blurred, but DOP and satellite count are sent unblurred.
+     */
+    fun onQualityHeard(p: PositionInfo) {
+        val d = p.hdop ?: p.pdop ?: return
+        val now = clock.wallMs()
+        setQuality(d, p.satsInView, now); onQuality?.invoke(encodeQuality(d, p.satsInView, now)); status()
     }
 
     /** The position currently held, if any (for "use as fixed reference position"). */
@@ -80,7 +128,10 @@ class RadioGpsSource(private val clock: Clock) {
     /** @param fromConfig true for the position in the radio's NodeInfo at connect (may be stored from earlier). */
     fun onReport(p: PositionInfo, fromConfig: Boolean = false) {
         val now = clock.wallMs()
-        if (!fromConfig && (p.hdop != null || p.pdop != null)) { lastDopX100 = p.hdop ?: p.pdop; lastSats = p.satsInView; lastQualityWallMs = now }
+        if (!fromConfig && (p.hdop != null || p.pdop != null)) {
+            val d = (p.hdop ?: p.pdop)!!
+            setQuality(d, p.satsInView, now); onQuality?.invoke(encodeQuality(d, p.satsInView, now))
+        }
         if (fromConfig && p.locationSource != 1) {
             val ageS = p.timeS?.let { now / 1000 - it }
             if (ageS == null || ageS > MAX_STORED_AGE_S) {
@@ -135,9 +186,12 @@ class RadioGpsSource(private val clock: Clock) {
             else -> {
                 val kind = if (h.locationSource == 1) "radio's configured fixed position" else "radio GPS"
                 val dop = dopAccuracy()
-                val acc = heldAccuracy?.let { " ±${it.roundToInt()} m" }
-                    ?: dop?.let { " ±${it.roundToInt()} m (estimated from the DOP in its last position broadcast" + (lastSats?.let { s -> ", $s satellites" } ?: "") + ")" }
-                    ?: " (accuracy not reported yet; estimated once the radio broadcasts its position)"
+                val qAge = lastQualityWallMs?.let { ((clock.wallMs() - it) / 60_000).toInt() }
+                val acc = if (h.locationSource == 1) "" else heldAccuracy?.let { " ±${it.roundToInt()} m" }
+                    ?: dop?.let { " about ±${it.roundToInt()} m (from the DOP in its position broadcast " +
+                        (if (qAge != null && qAge >= 60) "${qAge / 60} h ago" else "${qAge ?: 0} min ago") + (lastSats?.let { s -> ", $s satellites" } ?: "") + ")" }
+                    ?: " (accuracy not known yet: the radio reports it only in its position broadcasts, every 15 min to a few hours. " +
+                        "A second connected radio that hears this one fills it in sooner.)"
                 val posAge = h.timeS?.let { ((clock.wallMs() / 1000 - it) / 60).coerceAtLeast(0) }
                 say("Using $kind$acc, assumed stationary" +
                     (posAge?.let { "; position determined $it min ago" } ?: (age?.let { "; last report $it min ago" } ?: "")))

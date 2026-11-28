@@ -100,6 +100,8 @@ data class MapFilter(
     val showBands: Boolean = true,
     /** Allowance (dB) on each side of the predicted range before a cell counts as stronger/weaker. */
     val toleranceDb: Double = 6.0,
+    /** Absolute time window (History tab: one day); overrides [range] when set. */
+    val window: LongRange? = null,
 )
 
 private class MapData(
@@ -326,7 +328,7 @@ private fun cellColor(c: CellStats, m: Metric): Color = when (c.cls) {
 private fun obsFilter(model: UiModel, f: MapFilter): ObsFilter {
     val now = model.engine.clock.wallMs()
     val mine = if (f.onlyMyDevices) model.engine.store.testDevices().map { it.nodeNum }.toSet() else null
-    return ObsFilter(fromMs = f.range.ms?.let { now - it }, preset = f.preset, minSnr = f.minSnr,
+    return ObsFilter(fromMs = f.window?.first ?: f.range.ms?.let { now - it }, toMs = f.window?.let { it.last + 1 }, preset = f.preset, minSnr = f.minSnr,
         maxAccuracyM = f.maxAccuracyM, fromNodes = mine, withPositionOnly = true, limit = 50_000, receiverNode = f.receiverNode,
         protocol = f.protocol, heardGroups = f.heardGroups)
 }
@@ -335,9 +337,10 @@ private fun load(model: UiModel, f: MapFilter): MapData {
     val store = model.engine.store
     val now = model.engine.clock.wallMs()
     val obs = store.observations(obsFilter(model, f))
-    val from = f.range.ms?.let { now - it }
-    val track = store.track(fromMs = from).filter { t -> f.maxAccuracyM == null || (t.accuracyM != null && t.accuracyM!! <= f.maxAccuracyM) }
-    val tests = store.testTx().filter { (from == null || it.sentMs >= from) && (f.maxAccuracyM == null || (it.accuracyM ?: 1e9) <= f.maxAccuracyM) }
+    val from = f.window?.first ?: f.range.ms?.let { now - it }
+    val to = f.window?.let { it.last + 1 }
+    val track = store.track(fromMs = from, toMs = to).filter { t -> f.maxAccuracyM == null || (t.accuracyM != null && t.accuracyM!! <= f.maxAccuracyM) }
+    val tests = store.testTx().filter { (from == null || it.sentMs >= from) && (to == null || it.sentMs < to) && (f.maxAccuracyM == null || (it.accuracyM ?: 1e9) <= f.maxAccuracyM) }
     val grid = Grid(f.cellM.toDouble())
     // When filtering by signal quality or device, "nothing heard" cells would be misleading; omit track then.
     val trackForCells = if (f.minSnr != null || f.onlyMyDevices || f.preset != null || f.heardGroups != null) emptyList() else track

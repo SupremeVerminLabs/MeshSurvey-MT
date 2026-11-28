@@ -48,7 +48,7 @@ class RadioGpsTest {
     @Test fun accuracyIsEstimatedFromTheBroadcastDopWhileThePositionComesFromNodeInfo() {
         val c = ManualClock(); val r = Rec(c)
         r.src.onReport(PositionInfo(45.0, -75.0, 50, c.wallMs() / 1000 - 10, 2, null, 0, null, null), fromConfig = true)   // NodeInfo: no quality fields
-        r.src.tick(); assertNull(r.fixes.last().accuracyM); assertTrue(r.status.contains("not reported yet"))
+        r.src.tick(); assertNull(r.fixes.last().accuracyM); assertTrue(r.status.contains("not known yet"))
         r.src.onReport(PositionInfo(45.02, -75.0, 50, null, 2, null, 0, 6, 13, pdop = 240))                              // blurred broadcast, PDOP 2.4, 6 sats
         r.src.tick()
         assertEquals(45.0, r.fixes.last().lat)                      // position still the precise one
@@ -56,7 +56,9 @@ class RadioGpsTest {
         r.src.onReport(PositionInfo(45.0, -75.0, 50, c.wallMs() / 1000, 2, null, 0, null, null), fromConfig = true)
         assertTrue(r.status.contains("6 satellites"))
         c.advance(3_700_000); r.src.tick()
-        assertNull(r.fixes.last().accuracyM)                        // an estimate older than an hour is dropped
+        assertEquals(12.0, r.fixes.last().accuracyM)                // a stationary radio's estimate is kept for a day…
+        c.advance(23 * 3_600_000L); r.src.tick()
+        assertNull(r.fixes.last().accuracyM)                        // …and dropped after that
     }
 
     @Test fun heldFixesCarryTheRealPositionTime() {
@@ -133,5 +135,49 @@ class RadioGpsTest {
         l.onFromRadio(FromRadioEncoder.nodeInfo(42, "Me", "M", 0, 45.0, -75.0))
         assertEquals(1, got.size)
         assertEquals(45.0, got[0].first.lat, 1e-6); assertTrue(got[0].second)
+    }
+
+    @Test fun accuracyFromABroadcastIsRememberedForADayAndRestoredAfterRestart() {
+        val clock = ManualClock()
+        val r = Rec(clock)
+        var saved: String? = null
+        r.src.onQuality = { saved = it }
+        r.src.onReport(pos(45.0, -75.0, bits = null, hdop = null, timeS = clock.wallMs() / 1000), fromConfig = true)   // NodeInfo: no DOP
+        clock.advance(1000); r.src.tick()
+        assertNull(r.fixes.last().accuracyM)
+        assertNull(r.src.shortAccuracy)
+        assertTrue(r.status.contains("not known yet"))
+        r.src.onReport(pos(45.0, -75.0, bits = 13, hdop = 160))                       // blurred broadcast, but its DOP counts
+        assertEquals("≈±8 m", r.src.shortAccuracy)
+        clock.advance(3 * 3_600_000L); r.src.tick()
+        assertEquals(8.0, r.fixes.last().accuracyM)                                    // still used 3 h later (was 1 h)
+        // next run: restored from the saved value, dropped once older than a day
+        val again = Rec(clock)
+        again.src.restoreQuality(saved)
+        again.src.onReport(pos(45.0, -75.0, bits = null, hdop = null, timeS = clock.wallMs() / 1000), fromConfig = true)
+        clock.advance(1000); again.src.tick()
+        assertEquals(8.0, again.fixes.last().accuracyM)
+        clock.advance(22 * 3_600_000L); again.src.tick()
+        assertNull(again.fixes.last().accuracyM)
+        assertNull(RadioGpsSource.decodeQuality("garbage"))
+    }
+
+    @Test fun anotherConnectedRadioHearingTheBroadcastSuppliesTheDop() {
+        val clock = ManualClock()
+        val st = meshsurvey.core.engine.Station(meshsurvey.core.store.SqlStore(meshsurvey.core.testsupport.testDriver()), clock)
+        val a = st.primary; val b = st.addReceiver()
+        val la = Harness.TestLink(); val lb = Harness.TestLink()
+        a.connect(la); b.connect(lb)
+        for ((l, n) in listOf(la to 0x111L, lb to 0x222L)) {
+            val nonce = meshsurvey.core.proto.Wire.parse(l.sent.first()).f(3)!!.u32
+            l.l!!.onFromRadio(FromRadioEncoder.myInfo(n)); l.l!!.onFromRadio(FromRadioEncoder.configComplete(nonce))
+        }
+        // radio B hears radio A's position broadcast over the air (PDOP 2.0, 7 satellites)
+        val payload = meshsurvey.core.proto.ProtoWriter().sfixed32(1, 450000000).sfixed32(2, -750000000).varint(11, 200L).varint(19, 7L).toByteArray()
+        lb.l!!.onFromRadio(FromRadioEncoder.packet(0x111, meshsurvey.core.proto.BROADCAST, 9, meshsurvey.core.proto.Port.POSITION, payload, snr = 5f, rssi = -90, rxTime = clock.wallMs() / 1000))
+        assertEquals(7, a.radioGps.satellites)
+        assertEquals("≈±10 m", a.radioGps.shortAccuracy)
+        assertNull(b.radioGps.satellites)
+        assertTrue(st.store.getMeta("gps_quality:${0x111}") != null)
     }
 }

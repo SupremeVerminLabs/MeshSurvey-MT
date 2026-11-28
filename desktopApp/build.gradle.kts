@@ -8,6 +8,9 @@ plugins {
 
 kotlin { jvmToolchain(17) }
 
+// Bundled data shared with Android (offline place names for the History tab).
+sourceSets { main { resources.srcDir(rootProject.file("data/resources")) } }
+
 // From the git tag in CI (v0.1.3 -> 0.1.3); MSI versions must be numeric MAJOR.MINOR.BUILD.
 val appVersion = (System.getenv("APP_VERSION") ?: "0.1.0").removePrefix("v")
 

@@ -326,6 +326,15 @@ class SqlStore(private val db: SqlDriver) : Store {
             meshsurvey.core.model.KnownNode(r.string(0)!!, r.string(1)!!, r.string(2), r.string(3), r.double(4), r.double(5), r.long(6)!!, r.string(7)!!)
         }
 
+    // ---------------- history ----------------
+
+    /** Light rows of every reception for the history list (no payload fields). */
+    fun historyObservations(): List<meshsurvey.core.history.HistObs> =
+        db.query("SELECT rx_ms,lat,lon,from_node,snr,receiver_node,preset,protocol,source FROM observation") { r ->
+            meshsurvey.core.history.HistObs(r.long(0)!!, r.double(1), r.double(2), r.long(3)!!, r.double(4), r.long(5), r.string(6),
+                r.string(7) ?: "meshtastic", Source.valueOf(r.string(8)!!))
+        }
+
     // ---------------- per-session management ----------------
 
     /** Reception counts per session (for the session list). */

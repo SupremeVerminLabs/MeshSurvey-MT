@@ -62,6 +62,13 @@ object Formats {
     private val dateTime = ThreadLocal.withInitial { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US) }
     fun time(ms: Long): String = time.get().format(Date(ms))
     fun dateTime(ms: Long): String = dateTime.get().format(Date(ms))
+    private val day = ThreadLocal.withInitial { SimpleDateFormat("EEE d MMM yyyy", Locale.US) }
+    fun day(ms: Long): String = day.get().format(Date(ms))
+    fun utcOffsetMs(ms: Long): Long = java.util.TimeZone.getDefault().getOffset(ms).toLong()
+    /** Reads the bundled places file (gzip TSV). */
+    fun places(input: java.io.InputStream?): meshsurvey.core.history.Places? = input?.use { s ->
+        java.util.zip.GZIPInputStream(s).bufferedReader().useLines { meshsurvey.core.history.Places.parse(it) }
+    }
 }
 
 /** Simulated GPS: posts one simulated fix per second on the UI thread. */
