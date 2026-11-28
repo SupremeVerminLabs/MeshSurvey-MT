@@ -53,6 +53,15 @@ fun TestScreen(model: UiModel) {
     val ab by engine.abState.collectAsState()
     val radio by engine.radioStatus.collectAsState()
 
+    if (radio.info.protocol == meshsurvey.core.radio.MeshProtocol.MESHCORE) {
+        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${engine.radioLabel()} is a MeshCore radio", fontWeight = FontWeight.Bold)
+            Text("MeshCore radios are listen-only in this version: the app logs what the radio hears and maps it, but sends nothing " +
+                "and never changes the radio's settings. A/B tests and preset changes are Meshtastic only. MeshCore trace tests may come later.")
+            Text("Select a Meshtastic radio in the top bar to run tests.", fontSize = 12.sp, color = Color.DarkGray)
+        }
+        return
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Passive logging is always on. Nothing below transmits until you press a send/start button.", fontSize = 12.sp, color = Color.DarkGray)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

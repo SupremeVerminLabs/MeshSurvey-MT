@@ -46,7 +46,8 @@ class BleHelperProcess(
     }
 }
 
-data class BleDevice(val address: String, val name: String, val rssi: Int?, val paired: Boolean)
+/** [protocol] null = not seen advertising (a paired device); the protocol is then found when connecting. */
+data class BleDevice(val address: String, val name: String, val rssi: Int?, val paired: Boolean, val protocol: MeshProtocol? = MeshProtocol.MESHTASTIC)
 
 sealed class BleScanResult {
     data class Found(val devices: List<BleDevice>) : BleScanResult()
@@ -54,11 +55,14 @@ sealed class BleScanResult {
 }
 
 object BleHelperScan {
-    /** Parses `dev <address> <rssi|-> <paired 0|1> <name…>`. */
+    /** Parses `dev|devmc <address> <rssi|-> <paired 0|1> <name…>` (devmc = advertises the MeshCore / Nordic UART service). */
     fun parseDevice(line: String): BleDevice? {
         val p = line.split(" ", limit = 5)
-        if (p.size < 4 || p[0] != "dev") return null
-        return BleDevice(p[1], p.getOrNull(4)?.trim().orEmpty().ifEmpty { "Meshtastic" }, p[2].toIntOrNull(), p[3] == "1")
+        if (p.size < 4 || (p[0] != "dev" && p[0] != "devmc")) return null
+        val mc = p[0] == "devmc"
+        val paired = p[3] == "1"
+        val proto = when { mc -> MeshProtocol.MESHCORE; paired && p[2] == "-" -> null; else -> MeshProtocol.MESHTASTIC }
+        return BleDevice(p[1], p.getOrNull(4)?.trim().orEmpty().ifEmpty { if (mc) "MeshCore" else "Meshtastic" }, p[2].toIntOrNull(), paired, proto)
     }
 
     fun adapterMessage(state: String): String? = when (state) {
@@ -100,7 +104,7 @@ object BleHelperScan {
                 val l = next(end - System.currentTimeMillis()) ?: break
                 when {
                     l == "scan-done" || l.startsWith("__exit") -> break
-                    l.startsWith("dev ") -> parseDevice(l)?.let { found[it.address] = it }
+                    l.startsWith("dev ") || l.startsWith("devmc ") -> parseDevice(l)?.let { found[it.address] = it }
                     l.startsWith("error scan") -> return BleScanResult.Unavailable("Bluetooth scan failed: ${l.removePrefix("error scan").trim()}")
                 }
             }
@@ -129,6 +133,9 @@ class HelperBleLink(
     private var listener: RadioLink.Listener? = null
     @Volatile private var connected = false
     @Volatile private var closed = false
+    /** Reported by the helper on connect (which Bluetooth service the radio offers). */
+    @Volatile private var proto = MeshProtocol.MESHTASTIC
+    override val detectedProtocol: MeshProtocol get() = proto
 
     override fun start(listener: RadioLink.Listener) {
         this.listener = listener
@@ -154,9 +161,12 @@ class HelperBleLink(
             l.startsWith("error pair") -> ls.onLinkState(LinkState.FAILED,
                 "Pairing failed: ${l.removePrefix("error pair").trim()}. Check the PIN: radios with a screen show it; " +
                     "screenless radios such as the RAK4631 use 123456 unless changed.")
-            l.startsWith("connected") -> { connected = true; ls.onLinkState(LinkState.CONNECTED, description) }
+            l.startsWith("connected") -> {
+                proto = if (l.split(" ").getOrNull(2) == "meshcore") MeshProtocol.MESHCORE else MeshProtocol.MESHTASTIC
+                connected = true; ls.onLinkState(LinkState.CONNECTED, description)
+            }
             l.startsWith("error connect") -> ls.onLinkState(LinkState.FAILED, "Bluetooth: ${l.removePrefix("error connect").trim()}")
-            l.startsWith("rx ") -> l.substring(3).hexToBytes()?.let { ls.onFromRadio(it) }
+            l.startsWith("rx ") -> l.substring(3).hexToBytes()?.let { if (proto == MeshProtocol.MESHCORE) ls.onMeshCoreFrame(it) else ls.onFromRadio(it) }
                 ?: ls.onDebugText("Bluetooth helper sent malformed data")
             l == "lost" -> { connected = false; ls.onLinkState(LinkState.DISCONNECTED, "Bluetooth link lost") }
             l.startsWith("error ") || l.startsWith("log ") -> ls.onDebugText("Bluetooth: " + l.substringAfter(' '))
@@ -172,8 +182,14 @@ class HelperBleLink(
 
     override fun send(toRadio: ByteArray): Boolean {
         val h = helper ?: return false
-        if (!connected || closed) return false
+        if (!connected || closed || proto != MeshProtocol.MESHTASTIC) return false
         return h.send("tx " + toRadio.toHex())
+    }
+
+    override fun sendMeshCore(frame: ByteArray): Boolean {
+        val h = helper ?: return false
+        if (!connected || closed || proto != MeshProtocol.MESHCORE) return false
+        return h.send("tx " + frame.toHex())
     }
 
     override fun close() {

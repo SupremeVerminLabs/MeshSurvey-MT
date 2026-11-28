@@ -99,6 +99,8 @@ data class SurveySession(
     val frequencySource: String? = null,
     /** Device that recorded the session; null = this device. */
     val originDevice: String? = null,
+    /** Firmware family of the receiving radio: "meshtastic" or "meshcore". */
+    val protocol: String = "meshtastic",
 )
 
 /** One physical reception reported by the connected radio. Never merged by packet id. */
@@ -139,6 +141,33 @@ data class Observation(
     val fixSource: String? = null,
     /** Age of the underlying position at reception (for re-asserted stationary positions this can be minutes). */
     val positionAgeMs: Long? = null,
+    /** Firmware family of the receiving radio: "meshtastic" or "meshcore". Receptions are only compared within one protocol. */
+    val protocol: String = "meshtastic",
+    /**
+     * The node this radio heard the transmission from directly, as far as the packet says:
+     * MeshCore "mc:<public-key prefix hex>" (last repeater in the path, or the sender at zero hops);
+     * Meshtastic "mt:!<node id>" at zero hops, or "mt:~<relay byte>" when relayed (the byte alone does not identify a node).
+     * null = not identifiable (e.g. direct-routed MeshCore packets).
+     */
+    val heardId: String? = null,
+)
+
+/**
+ * A node whose position the radio knows: a MeshCore contact or advert, or a Meshtastic node-database entry. Shown on the
+ * map's "Known nodes" layer. Positions are whatever the node advertises (often rounded or a fixed setting), not measured.
+ */
+data class KnownNode(
+    val protocol: String,
+    /** MeshCore: full public key (hex). Meshtastic: "!xxxxxxxx". */
+    val nodeId: String,
+    val name: String?,
+    /** "repeater", "companion", "room server", "sensor", or a Meshtastic role such as ROUTER / CLIENT. */
+    val kind: String?,
+    val lat: Double?,
+    val lon: Double?,
+    val updatedMs: Long,
+    /** "contacts", "advert" (MeshCore) or "nodedb" (Meshtastic). */
+    val source: String,
 )
 
 data class TrackPoint(

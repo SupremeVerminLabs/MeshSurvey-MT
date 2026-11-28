@@ -15,6 +15,13 @@ enum class LinkKind(val label: String, val isStream: Boolean) {
 
 enum class LinkState { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
 
+/** Which firmware family a radio runs. Everything a radio logs is tagged with it. */
+enum class MeshProtocol(val label: String, val tag: String) {
+    MESHTASTIC("Meshtastic", "meshtastic"),
+    MESHCORE("MeshCore", "meshcore");
+    companion object { fun ofTag(t: String?) = entries.firstOrNull { it.tag == t } ?: MESHTASTIC }
+}
+
 interface RadioLink {
     val kind: LinkKind
     val description: String
@@ -25,11 +32,23 @@ interface RadioLink {
     /** Called about once per second from RadioClient.tick(); used by the simulator. */
     fun tick() {}
 
+    /**
+     * The protocol, when the transport itself reveals it (which Bluetooth service the radio offers). null = unknown until
+     * probed (USB serial, TCP): the client then sends a harmless MeshCore identity request first, which a Meshtastic radio ignores.
+     */
+    val detectedProtocol: MeshProtocol? get() = MeshProtocol.MESHTASTIC
+    /** Fixes the stream framing once the protocol is known (stream links only). */
+    fun setProtocol(p: MeshProtocol) {}
+    /** Send one MeshCore companion frame (payload only; the link adds serial framing). False if unsupported. */
+    fun sendMeshCore(frame: ByteArray): Boolean = false
+
     interface Listener {
         fun onLinkState(state: LinkState, detail: String = "")
         fun onFromRadio(bytes: ByteArray)
         /** Non-protobuf text from the radio (serial debug console); optional. */
         fun onDebugText(text: String) {}
+        /** One MeshCore companion frame from the radio. */
+        fun onMeshCoreFrame(bytes: ByteArray) {}
     }
 }
 

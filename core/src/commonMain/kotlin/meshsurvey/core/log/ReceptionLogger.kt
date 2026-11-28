@@ -15,6 +15,8 @@ import meshsurvey.core.proto.Port
 import meshsurvey.core.proto.Wire
 import meshsurvey.core.proto.f
 import meshsurvey.core.radio.FrequencyCalc
+import meshsurvey.core.radio.MeshCore
+import meshsurvey.core.radio.MeshCoreIds
 import meshsurvey.core.radio.RadioInfo
 import meshsurvey.core.radio.ReceivedPacket
 import meshsurvey.core.store.Store
@@ -72,7 +74,7 @@ class ReceptionLogger(
             receiverNode = info.myNodeNum, linkKind = info.linkKind?.name, firmware = info.firmware,
             preset = info.preset, region = info.region, source = source,
             profileId = profileId, hwModel = info.hwModel, txPowerDbm = info.txPowerDbm,
-            frequencyMhz = fq.mhz, frequencySource = fq.source.name,
+            frequencyMhz = fq.mhz, frequencySource = fq.source.name, protocol = info.protocol.tag,
         )
         store.insertSession(s)
         session = s
@@ -138,7 +140,62 @@ class ReceptionLogger(
             frequencySource = fq.source.name,
             fixSource = fix?.source?.name,
             positionAgeMs = fix?.let { f -> f.positionTimeMs?.let { rx.phoneTimeMs - it } ?: fixAgeMs(f) },
+            heardId = when {
+                late -> null
+                p.hopsAway == 0 -> "mt:!" + p.from.toString(16).padStart(8, '0')
+                p.relayByte != null && p.relayByte > 0 -> "mt:~" + p.relayByte.toString(16).padStart(2, '0')
+                else -> null
+            },
         )
+        return save(o, fix, status, late)
+    }
+
+    /**
+     * One over-the-air packet reported by a MeshCore radio (PUSH_LOG_RX_DATA, always live). Contents are never decrypted or
+     * stored; only header facts (route, path, payload type) and the radio's SNR/RSSI.
+     */
+    fun onMeshCore(rx: MeshCore.RxPacket, phoneTimeMs: Long, info: RadioInfo): Observation? {
+        val s = session ?: return null
+        val adv = rx.advert
+        if (adv != null && info.publicKeyHex != null && adv.keyHex == info.publicKeyHex) { stats = stats.copy(skippedOwn = stats.skippedOwn + 1); return null }
+        val from = when {
+            adv != null -> MeshCoreIds.fromPrefix(adv.publicKey.copyOfRange(0, 4))
+            rx.sourceHash != null -> MeshCoreIds.fromHash(rx.sourceHash)
+            else -> MeshCoreIds.UNKNOWN
+        }
+        val to = when (rx.payloadType) {
+            MeshCore.PayloadType.REQ, MeshCore.PayloadType.RESPONSE, MeshCore.PayloadType.TXT_MSG, MeshCore.PayloadType.PATH,
+            MeshCore.PayloadType.ANON_REQ -> rx.payload.firstOrNull()?.let { MeshCoreIds.fromHash(it.toInt() and 0xff) } ?: 0L
+            else -> 0L
+        }
+        val type = when (rx.payloadType) {
+            MeshCore.PayloadType.ADVERT -> PacketType.NODEINFO
+            MeshCore.PayloadType.TXT_MSG, MeshCore.PayloadType.GRP_TXT -> PacketType.TEXT
+            MeshCore.PayloadType.ACK, MeshCore.PayloadType.PATH -> PacketType.ROUTING
+            MeshCore.PayloadType.TRACE -> PacketType.TRACEROUTE
+            else -> PacketType.OTHER
+        }
+        val status = if (rx.payloadType == MeshCore.PayloadType.ADVERT || rx.payloadType == MeshCore.PayloadType.TRACE) RxStatus.DECODED else RxStatus.ENCRYPTED
+        val fix = freshFix()
+        val fq = FrequencyCalc.from(info)
+        val o = Observation(
+            sessionId = s.id, receiverNode = info.myNodeNum, rxMs = phoneTimeMs, nodeRxTime = null,
+            lat = fix?.lat, lon = fix?.lon, accuracyM = fix?.accuracyM, fixAgeMs = fixAgeMs(lastFix),
+            rssi = rx.rssi, snr = rx.snr, packetId = rx.fingerprint, fromNode = from, toNode = to,
+            channel = null, portnum = null, type = type, status = status,
+            hopStart = null, hopLimit = null, hopsAway = if (rx.isFlood) rx.hops else null,
+            relayByte = if (rx.isFlood) rx.path.lastOrNull()?.firstOrNull()?.toInt()?.and(0xff) else null,
+            payloadLen = rx.payload.size, preset = info.preset, region = info.region, frequencyMhz = fq.mhz,
+            summary = if (config.storeSummaries) "meshcore ${rx.payloadType.name.lowercase()} ${rx.route.name.lowercase()}" +
+                (adv?.let { a -> " ${MeshCore.nodeType(a.type)}" + (a.name?.let { " $it" } ?: "") } ?: "") else null,
+            source = s.source, frequencySource = fq.source.name, fixSource = fix?.source?.name,
+            positionAgeMs = fix?.let { f -> f.positionTimeMs?.let { phoneTimeMs - it } ?: fixAgeMs(f) },
+            protocol = "meshcore", heardId = rx.heardPrefix?.let { "mc:$it" },
+        )
+        return save(o, fix, status, false)
+    }
+
+    private fun save(o: Observation, fix: Fix?, status: RxStatus, late: Boolean): Observation {
         val id = store.insertObservation(o)
         val saved = o.copy(id = id)
         stats = stats.copy(

@@ -31,6 +31,10 @@ data class ObsFilter(
     val sessionId: String? = null,
     /** Only receptions by this radio (node number); null = all receivers. */
     val receiverNode: Long? = null,
+    /** "meshtastic" or "meshcore"; null = both. */
+    val protocol: String? = null,
+    /** Only receptions heard directly from these nodes (group keys from [meshsurvey.core.map.Heard.group]); null = all. */
+    val heardGroups: Set<String>? = null,
     val withPositionOnly: Boolean = false,
     val bbox: DoubleArray? = null, // latMin, latMax, lonMin, lonMax
     val limit: Int? = null,

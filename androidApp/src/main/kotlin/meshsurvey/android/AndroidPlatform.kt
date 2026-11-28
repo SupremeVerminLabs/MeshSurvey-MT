@@ -109,7 +109,7 @@ class AndroidPlatform(private val app: Context, private val engine: SurveyEngine
         LinkKind.TCP -> {
             val h = host?.trim().orEmpty().ifEmpty { throw IllegalArgumentException("Enter the node's host name or IP") }
             val parts = h.split(":")
-            TcpLink(parts[0], parts.getOrNull(1)?.toIntOrNull() ?: 4403, post)
+            TcpLink(parts[0], parts.getOrNull(1)?.toIntOrNull() ?: 4403, post = post)
         }
         LinkKind.SIMULATED -> throw IllegalStateException("handled by shared UI")
     }

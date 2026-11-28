@@ -3,6 +3,27 @@
 Verification status keys: **Implemented** · **Compiled** (by a real compiler; says where) · **Simulator tested** ·
 **Integration tested** · **Hardware tested** (physical radio; says which) · **Unverified**.
 
+## Unreleased: MeshCore listening and map layers, 2026-11-27
+
+**Implemented, unit tested (local `tools/verify-core.sh`, 132 tests); compiled by CI; not hardware tested.**
+
+* **MeshCore radios, listen-only.** USB serial: the app first sends a MeshCore DEVICE_QUERY (a Meshtastic radio ignores it) and only
+  continues with Meshtastic if no MeshCore reply comes within 2.5 s (waiting out ESP32 boot output). Windows Bluetooth: the helper
+  looks for the Meshtastic service, then the Nordic UART service MeshCore uses, and reports which it found. MeshCore radios get
+  APP_START, DEVICE_QUERY, GET_CONTACTS and GET_BATT_AND_STORAGE only (all local; enforced in `RadioClient.sendMc`); messages are
+  never synced, so they stay for the user's MeshCore app. Every received packet (PUSH_LOG_RX_DATA) is logged with SNR/RSSI, route,
+  payload type and path; contents are never decrypted.
+* **Protocol tag** on every session and reception (`protocol`), shown in the top bar, Monitor preset column ("MC 910.525/BW62.5/SF7")
+  and map cell details. Map "Both protocols / Meshtastic / MeshCore" selector; mixed views are labelled coverage-only.
+* **Heard from** (`heard_id`): the node each reception was heard from directly (MeshCore: last repeater in the flood path, or the
+  sender at zero hops; Meshtastic: the sender at zero hops, else the relay byte). Existing Meshtastic rows are back-filled.
+* **Known nodes**: positions from MeshCore contacts and adverts, and from the Meshtastic node database.
+* **Map layers**: Tile colours (on/off), Known nodes (▲ repeaters, ■ others, coloured once heard), Heard from (one colour per node;
+  with one node chosen, lines from each place it was heard to its advertised position), and a Nodes picker that filters tiles,
+  points and layers to chosen repeaters.
+* Tests and preset changes stay Meshtastic-only; the Test tab explains this for a MeshCore radio.
+* Schema v7, bundle and CSV carry `protocol` and `heard_id`.
+
 ## Unreleased: Phase A (regression audit), 2026-11-27
 
 ### Repository state vs. working copy

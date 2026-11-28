@@ -1,5 +1,7 @@
 package meshsurvey.ui
 
+import meshsurvey.core.radio.MeshProtocol
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -162,12 +164,12 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
             fontWeight = FontWeight.Bold, fontSize = 16.sp)
         val receivers by model.station.receivers.collectAsState()
         val pm1 by engine.radioMetrics.collectAsState()
-        if (receivers.size <= 1) Chip(radioLabel(radio.state) + (pm1?.batteryLevel?.let { if (it > 100) " · ⚡" else " · $it %" } ?: ""), radioColor(radio.state))
+        if (receivers.size <= 1) Chip(radioLabel(radio.state) + (if (radio.info.protocol == MeshProtocol.MESHCORE) " · MeshCore" else "") + batteryShort(pm1), radioColor(radio.state))
         else receivers.forEach { e ->
             val st by e.radioStatus.collectAsState()
             val pm by e.radioMetrics.collectAsState()
             // one chip per radio; the outlined one is shown in the screens below; tap to switch
-            Text((if (e === engine) "▸ " else "") + "${e.radioLabel()} · ${radioLabel(st.state)}" + (pm?.batteryLevel?.let { if (it > 100) " · ⚡" else " · $it %" } ?: ""), color = Color.White, fontSize = 12.sp,
+            Text((if (e === engine) "▸ " else "") + "${e.radioLabel()} · ${radioLabel(st.state)}" + batteryShort(pm), color = Color.White, fontSize = 12.sp,
                 modifier = Modifier.background(radioColor(st.state), RoundedCornerShape(10.dp)).clickable { model.engine = e }
                     .padding(horizontal = 8.dp, vertical = 2.dp))
         }
@@ -274,4 +276,13 @@ fun StartPanel(model: UiModel, onChoose: (Tab, meshsurvey.core.model.TestRole?) 
 
 /** Short name for a radio in chips and labels: its node id, or its connection while unknown. */
 fun SurveyEngine.radioLabel(): String =
-    radio.info.myNodeNum?.let { n -> store.nodeNames()[n]?.shortName?.takeIf { it.isNotBlank() } ?: MeshEnums.nodeId(n) } ?: "radio"
+    if (radio.info.protocol == MeshProtocol.MESHCORE) (radio.info.nodeName?.take(14) ?: "MeshCore") + " (MC)"
+    else radio.info.myNodeNum?.let { n -> store.nodeNames()[n]?.shortName?.takeIf { it.isNotBlank() } ?: MeshEnums.nodeId(n) } ?: "radio"
+
+/** " · 87 %", " · ⚡" (external power), " · 4.05 V" (MeshCore reports voltage only), or "". */
+fun batteryShort(m: meshsurvey.core.radio.RadioMetrics?): String = when {
+    m == null -> ""
+    m.batteryLevel != null -> if (m.batteryLevel!! > 100) " · ⚡" else " · ${m.batteryLevel} %"
+    m.voltage != null && m.voltage!! > 0 -> " · ${fmt(m.voltage!!, 2)} V"
+    else -> ""
+}

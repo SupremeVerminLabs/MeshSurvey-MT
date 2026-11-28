@@ -52,7 +52,7 @@ class TcpLinkTest {
             override fun onPacket(rx: ReceivedPacket) { pkt = rx; got.countDown() }
             override fun onDebugText(text: String) { debug += text }
         })
-        rc.connect(TcpLink("127.0.0.1", server.localPort) { mainQ.put(it) })
+        rc.connect(TcpLink("127.0.0.1", server.localPort, meshsurvey.core.radio.MeshProtocol.MESHTASTIC) { mainQ.put(it) })
         val deadline = System.currentTimeMillis() + 5000
         while (got.count > 0 && System.currentTimeMillis() < deadline) mainQ.poll(100, TimeUnit.MILLISECONDS)?.run()
         assertEquals(RadioState.READY, rc.state)

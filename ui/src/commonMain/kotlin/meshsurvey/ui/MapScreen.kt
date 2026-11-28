@@ -52,6 +52,14 @@ import meshsurvey.core.model.TestTx
 import meshsurvey.core.model.TrackPoint
 import meshsurvey.core.proto.MeshEnums
 import meshsurvey.core.store.ObsFilter
+import meshsurvey.core.map.Heard
+import meshsurvey.core.model.KnownNode
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.Checkbox
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 
 enum class Metric { SNR, RSSI }
 enum class TimeRange(val label: String, val ms: Long?) { HOUR("1 h", 3_600_000), DAY("24 h", 86_400_000), WEEK("7 d", 7 * 86_400_000L), ALL("All", null) }
@@ -71,6 +79,14 @@ data class MapFilter(
     val onlyMyDevices: Boolean = false,
     /** Only receptions by this radio; null = all of this device's radios (and imported data). */
     val receiverNode: Long? = null,
+    /** "meshtastic" / "meshcore"; null = both (cells then mix protocols: coverage only, not a like-for-like comparison). */
+    val protocol: String? = null,
+    /** Layer: positions nodes advertise (MeshCore contacts/adverts, Meshtastic node database). */
+    val showKnown: Boolean = true,
+    /** Layer: where each node was heard directly, one colour per node. */
+    val showHeard: Boolean = false,
+    /** Only these heard-from nodes (Heard.group keys) in tiles, points and layers; null = all. */
+    val heardGroups: Set<String>? = null,
 )
 
 private class MapData(
@@ -80,6 +96,8 @@ private class MapData(
     val track: List<TrackPoint>,
     val tests: List<TestTx>,
     val presets: List<String>,
+    val known: List<KnownNode>,
+    val heardCounts: Map<String, Int>,
 )
 
 fun argb(v: Long) = Color(v.toInt())
@@ -113,8 +131,10 @@ fun MapScreen(model: UiModel) {
         }
     }
 
+    val textMeasurer = rememberTextMeasurer()
+    var pickNodes by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
-        FilterBar(model, data?.presets ?: emptyList())
+        FilterBar(model, data?.presets ?: emptyList()) { pickNodes = true }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val d = data
             SlippyMap(model.map, model.tiles, Modifier.fillMaxSize(),
@@ -171,6 +191,38 @@ fun MapScreen(model: UiModel) {
                         val path = Path().apply { moveTo(p.x, p.y - 8); lineTo(p.x + 8, p.y); lineTo(p.x, p.y + 8); lineTo(p.x - 8, p.y); close() }
                         drawPath(path, col); drawPath(path, Color.Black, style = Stroke(1.5f))
                     }
+                    if (f.showHeard) {
+                        // where each node was heard directly; with one node selected, lines to its advertised position
+                        val single = f.heardGroups?.singleOrNull()?.let { g -> Heard.candidates(g, d.known).singleOrNull()?.takeIf { it.lat != null } }
+                        val target = single?.let { proj.toOffset(it.lat!!, it.lon!!) }
+                        for (o in d.obs.takeLast(5000)) {
+                            val lat = o.lat ?: continue; val h = o.heardId ?: continue
+                            val p = proj.toOffset(lat, o.lon!!)
+                            if (p.x < -10 || p.y < -10 || p.x > size.width + 10 || p.y > size.height + 10) continue
+                            val col = argb(Heard.color(Heard.group(h)))
+                            if (target != null) drawLine(col.copy(alpha = 0.25f), p, target, 1.5f)
+                            drawCircle(col, 4.5f, p); drawCircle(Color.White, 4.5f, p, style = Stroke(1f))
+                        }
+                    }
+                    if (f.showKnown) for (n in d.known) {
+                        val lat = n.lat ?: continue; val lon = n.lon ?: continue
+                        val g = Heard.groupOf(n)
+                        if (f.heardGroups != null && g !in f.heardGroups) continue
+                        val p = proj.toOffset(lat, lon)
+                        if (p.x < -20 || p.y < -20 || p.x > size.width + 20 || p.y > size.height + 20) continue
+                        val heard = g != null && (d.heardCounts[g] ?: 0) > 0
+                        val col = if (heard && g != null) argb(Heard.color(g)) else Color(0xFF9E9E9E)
+                        val repeater = n.kind == "repeater" || n.kind == "room server" || (n.kind?.startsWith("ROUTER") == true) || n.kind == "REPEATER"
+                        if (repeater) {
+                            val tri = Path().apply { moveTo(p.x, p.y - 10); lineTo(p.x + 9, p.y + 7); lineTo(p.x - 9, p.y + 7); close() }
+                            drawPath(tri, col); drawPath(tri, Color.Black, style = Stroke(1.5f))
+                        } else {
+                            drawRect(col, Offset(p.x - 5, p.y - 5), Size(10f, 10f)); drawRect(Color.Black, Offset(p.x - 5, p.y - 5), Size(10f, 10f), style = Stroke(1f))
+                        }
+                        val nm = n.name
+                        if (model.map.zoom >= 12 && nm != null)
+                            drawText(textMeasurer, nm.take(20), Offset(p.x + 10, p.y - 8), TextStyle(fontSize = 10.sp, color = Color.Black, background = Color(0xCCFFFFFF)))
+                    }
                     fix?.let { fx ->
                         val p = proj.toOffset(fx.lat, fx.lon)
                         fx.accuracyM?.let { drawCircle(Color(0x332196F3), (it / proj.metersPerPx(fx.lat)).toFloat(), p) }
@@ -182,12 +234,13 @@ fun MapScreen(model: UiModel) {
                 Button(onClick = { model.map.zoom = (model.map.zoom - 1).coerceAtLeast(2.0) }) { Text("−") }
                 Button(onClick = { fix?.let { model.map.centerOn(it.lat, it.lon, maxOf(model.map.zoom, 15.0)) } }) { Text("◎") }
             }
-            Legend(f, Modifier.align(Alignment.BottomStart).padding(8.dp))
+            Legend(f, data, Modifier.align(Alignment.BottomStart).padding(8.dp))
             Text(model.tiles.attribution, fontSize = 10.sp, modifier = Modifier.align(Alignment.BottomEnd)
                 .background(Color(0xAAFFFFFF)).padding(horizontal = 4.dp))
         }
     }
     selected?.let { (key, grid) -> CellDialog(model, grid, key, f) { selected = null } }
+    if (pickNodes) data?.let { d -> NodePicker(model, d) { pickNodes = false } }
 }
 
 private fun cellColor(c: CellStats, m: Metric): Color = when (c.cls) {
@@ -205,7 +258,8 @@ private fun obsFilter(model: UiModel, f: MapFilter): ObsFilter {
     val now = model.engine.clock.wallMs()
     val mine = if (f.onlyMyDevices) model.engine.store.testDevices().map { it.nodeNum }.toSet() else null
     return ObsFilter(fromMs = f.range.ms?.let { now - it }, preset = f.preset, minSnr = f.minSnr,
-        maxAccuracyM = f.maxAccuracyM, fromNodes = mine, withPositionOnly = true, limit = 50_000, receiverNode = f.receiverNode)
+        maxAccuracyM = f.maxAccuracyM, fromNodes = mine, withPositionOnly = true, limit = 50_000, receiverNode = f.receiverNode,
+        protocol = f.protocol, heardGroups = f.heardGroups)
 }
 
 private fun load(model: UiModel, f: MapFilter): MapData {
@@ -217,14 +271,14 @@ private fun load(model: UiModel, f: MapFilter): MapData {
     val tests = store.testTx().filter { (from == null || it.sentMs >= from) && (f.maxAccuracyM == null || (it.accuracyM ?: 1e9) <= f.maxAccuracyM) }
     val grid = Grid(f.cellM.toDouble())
     // When filtering by signal quality or device, "nothing heard" cells would be misleading; omit track then.
-    val trackForCells = if (f.minSnr != null || f.onlyMyDevices || f.preset != null) emptyList() else track
-    val cells = Coverage.aggregate(grid, obs, trackForCells, tests)
-    val presets = store.sessions().mapNotNull { it.preset }.distinct()
-    return MapData(grid, cells, obs, track, tests, presets)
+    val trackForCells = if (f.minSnr != null || f.onlyMyDevices || f.preset != null || f.heardGroups != null) emptyList() else track
+    val cells = Coverage.aggregate(grid, obs, trackForCells, if (f.heardGroups != null || f.protocol == "meshcore") emptyList() else tests)
+    val presets = store.sessions().filter { f.protocol == null || it.protocol == f.protocol }.mapNotNull { it.preset }.distinct()
+    return MapData(grid, cells, obs, track, tests, presets, store.knownNodes(f.protocol), store.heardGroupCounts(f.protocol))
 }
 
 @Composable
-private fun FilterBar(model: UiModel, presets: List<String>) {
+private fun FilterBar(model: UiModel, presets: List<String>, onPickNodes: () -> Unit) {
     val f = model.mapFilter
     fun set(n: MapFilter) { model.mapFilter = n }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 2.dp),
@@ -232,7 +286,14 @@ private fun FilterBar(model: UiModel, presets: List<String>) {
         FilterChip(f.metric == Metric.SNR, { set(f.copy(metric = Metric.SNR)) }, { Text("SNR") })
         FilterChip(f.metric == Metric.RSSI, { set(f.copy(metric = Metric.RSSI)) }, { Text("RSSI") })
         Text("|", color = Color.Gray)
-        FilterChip(f.showGrid, { set(f.copy(showGrid = !f.showGrid)) }, { Text("Grid") })
+        Menu(when (f.protocol) { "meshtastic" -> "Meshtastic"; "meshcore" -> "MeshCore"; else -> "Both protocols" },
+            listOf("Both protocols" to { set(f.copy(protocol = null, heardGroups = null, preset = null)) },
+                "Meshtastic" to { set(f.copy(protocol = "meshtastic", heardGroups = null, preset = null)) },
+                "MeshCore" to { set(f.copy(protocol = "meshcore", heardGroups = null, preset = null)) }))
+        FilterChip(f.showGrid, { set(f.copy(showGrid = !f.showGrid)) }, { Text("Tile colours") })
+        FilterChip(f.showKnown, { set(f.copy(showKnown = !f.showKnown)) }, { Text("Known nodes") })
+        FilterChip(f.showHeard, { set(f.copy(showHeard = !f.showHeard)) }, { Text("Heard from") })
+        OutlinedButton(onClick = onPickNodes) { Text(f.heardGroups?.let { "Nodes: ${it.size}" } ?: "Nodes: all", fontSize = 13.sp) }
         FilterChip(f.showPoints, { set(f.copy(showPoints = !f.showPoints)) }, { Text("Points") })
         FilterChip(f.showTrack, { set(f.copy(showTrack = !f.showTrack)) }, { Text("Track") })
         FilterChip(f.showTests, { set(f.copy(showTests = !f.showTests)) }, { Text("Tests") })
@@ -264,8 +325,18 @@ fun Menu(label: String, items: List<Pair<String, () -> Unit>>) {
 }
 
 @Composable
-private fun Legend(f: MapFilter, modifier: Modifier) {
+private fun Legend(f: MapFilter, d: MapData?, modifier: Modifier) {
     Column(modifier.background(Color(0xE6FFFFFF), RoundedCornerShape(6.dp)).padding(6.dp)) {
+        if (f.protocol == null && d != null && d.heardCounts.keys.any { it.startsWith("mc:") } && d.heardCounts.keys.any { it.startsWith("mt:") })
+            Text("Both protocols shown: coverage only, not a like-for-like comparison", fontSize = 10.sp, color = Color(0xFF8D6E00))
+        if (f.showHeard && d != null) {
+            Text("Heard directly from", fontSize = 11.sp)
+            val groups = (f.heardGroups?.toList() ?: d.heardCounts.keys.toList()).take(8)
+            groups.forEach { g -> LegendRow(argb(Heard.color(g)), Heard.label(g, d.known) + " · ${d.heardCounts[g] ?: 0}") }
+            if ((f.heardGroups?.size ?: d.heardCounts.size) > 8) Text("…", fontSize = 10.sp)
+        }
+        if (f.showKnown) Text("▲ repeater  ■ other node, at its advertised position (grey = not heard directly yet)", fontSize = 10.sp, color = Color.DarkGray)
+        if (!f.showGrid) return@Column
         val entries = if (f.metric == Metric.SNR)
             listOf(5.0 to "≥ 5 dB", 0.0 to "≥ 0", -7.0 to "≥ −7", -12.0 to "≥ −12", -99.0 to "< −12").map { argb(Scales.snr(it.first)) to it.second }
         else listOf(-80 to "≥ −90 dBm", -100 to "≥ −105", -110 to "≥ −115", -120 to "≥ −122", -130 to "< −122").map { argb(Scales.rssi(it.first)) to it.second }
@@ -292,6 +363,7 @@ private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, onCl
     val engine = model.engine
     val b = grid.bounds(key)
     val names = remember { engine.store.nodeNames() }
+    val known = remember { engine.store.knownNodes() }
     val obs = remember(key, f) {
         engine.store.observations(obsFilter(model, f).copy(bbox = doubleArrayOf(b.lat0, b.lat1, b.lon0, b.lon1), limit = 2000))
             .filter { grid.key(it.lat!!, it.lon!!) == key }.sortedByDescending { it.rxMs }
@@ -310,7 +382,8 @@ private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, onCl
                         "${cell.testsNotReceived} not received (B logging), ${cell.testsNoAck} no ACK, ${cell.testsUnknown} unknown")
                     Text("GPS accuracy ${cell.bestAccuracyM?.let { fmt(it, 0) } ?: "?"}–${cell.worstAccuracyM?.let { fmt(it, 0) } ?: "?"} m", fontSize = 12.sp)
                 }
-                Text("Relay byte = last byte of the relaying node's number as reported by firmware; it does not identify a node.",
+                Text("Relay byte = last byte of the relaying node's number (Meshtastic) or of the last repeater's key (MeshCore); " +
+                    "it alone does not identify a node.",
                     fontSize = 11.sp, color = Color.DarkGray)
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 LazyColumn(Modifier.heightIn(max = 420.dp)) {
@@ -318,7 +391,8 @@ private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, onCl
                         Column(Modifier.padding(vertical = 3.dp)) {
                             Text("${model.platform.formatDateTime(o.rxMs)}  ${o.type}  ${o.status}", fontSize = 12.sp)
                             Text("from ${names[o.fromNode]?.label ?: MeshEnums.nodeId(o.fromNode)} · RSSI ${o.rssi ?: "?"} · SNR ${o.snr?.let { fmt(it, 2) } ?: "?"} · " +
-                                "hops ${o.hopsAway ?: "?"} (${o.hopLimit ?: "?"}/${o.hopStart ?: "?"}) · relay ${o.relayByte?.let { "0x" + it.toString(16).padStart(2, '0') } ?: "?"}",
+                                "hops ${o.hopsAway ?: "?"} (${o.hopLimit ?: "?"}/${o.hopStart ?: "?"}) · relay ${o.relayByte?.let { "0x" + it.toString(16).padStart(2, '0') } ?: "?"}" +
+                                    (if (o.protocol == "meshcore") " · MeshCore" else "") + (o.heardId?.let { " · heard from ${Heard.label(Heard.group(it), known)}" } ?: ""),
                                 fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                             val conf = ConfidenceRules.classify(o)
                             Text(conf.cls.label + (if (conf.reasons.isEmpty()) "" else ": " + conf.reasons.joinToString("; ")), fontSize = 11.sp,
@@ -327,6 +401,40 @@ private fun CellDialog(model: UiModel, grid: Grid, key: Long, f: MapFilter, onCl
                                 "age ${(o.positionAgeMs ?: o.fixAgeMs)?.let { a -> if (a >= 120_000) "${a / 60_000} min" else "${a / 1000} s" } ?: "?"} · ${o.preset ?: "preset ?"} · " +
                                 "${o.frequencyMhz?.let { fmt(it, 3) + " MHz " + (if (o.frequencySource == "CALCULATED") "calc." else "cfg.") } ?: "freq ?"} · ${o.source}" +
                                 (o.originDevice?.let { " · imported from $it" } ?: "") + (o.summary?.let { " · $it" } ?: ""), fontSize = 11.sp, color = Color.DarkGray)
+                        }
+                    }
+                }
+            }
+        })
+}
+
+/** Choose which heard-from nodes the map shows (tiles, points, "Heard from" and "Known nodes" layers). */
+@Composable
+private fun NodePicker(model: UiModel, d: MapData, onClose: () -> Unit) {
+    val f = model.mapFilter
+    var chosen by remember { mutableStateOf(f.heardGroups ?: d.heardCounts.keys) }
+    AlertDialog(onDismissRequest = onClose,
+        confirmButton = { TextButton(onClick = {
+            model.mapFilter = f.copy(heardGroups = if (chosen.containsAll(d.heardCounts.keys)) null else chosen); onClose()
+        }) { Text("Apply") } },
+        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
+        title = { Text("Nodes heard directly") },
+        text = {
+            Column {
+                Text("Receptions are grouped by the short ID the packet carries (MeshCore: first key byte; Meshtastic relays: last node-number " +
+                    "byte). Two nodes can share an ID; those are shown as \"possibly\".", fontSize = 11.sp, color = Color.DarkGray)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { chosen = d.heardCounts.keys }) { Text("All") }
+                    TextButton(onClick = { chosen = emptySet() }) { Text("None") }
+                }
+                if (d.heardCounts.isEmpty()) Text("Nothing heard yet with an identifiable sender.")
+                LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                    items(d.heardCounts.entries.toList()) { (g, n) ->
+                        Row(Modifier.fillMaxWidth().clickable { chosen = if (g in chosen) chosen - g else chosen + g },
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(g in chosen, { chosen = if (g in chosen) chosen - g else chosen + g })
+                            Box(Modifier.padding(end = 6.dp).background(argb(Heard.color(g)), RoundedCornerShape(2.dp)).padding(6.dp))
+                            Text("${Heard.label(g, d.known)} · $n", fontSize = 13.sp)
                         }
                     }
                 }

@@ -77,3 +77,9 @@ bundle, or the same file twice, is refused.
 * `observation` + `position_age_ms`: age of the underlying position at reception. Equals `fix_age_ms` for live GPS; for a
   re-asserted stationary radio position it is the time since the radio determined that position.
 * Bundle format version 2 carries all of the above (v1 bundles still import).
+
+## v5–v7
+* v5: `survey_session.origin_device`. v6: `logging_window` rebuilt with `receiver_node`, unique per (origin, receiver, start).
+* v7 (MeshCore): `observation.protocol` and `survey_session.protocol` ("meshtastic" default, "meshcore"); `observation.heard_id`
+  ("mc:<key prefix hex>", "mt:!<node id>" at zero hops, "mt:~<relay byte>" when relayed; back-filled for existing Meshtastic rows);
+  `known_node(protocol, node_id, name, kind, lat, lon, updated_ms, source)` — advertised positions, local display only, never exported.

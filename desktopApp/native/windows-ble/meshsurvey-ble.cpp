@@ -5,14 +5,16 @@
 // Runtime Bluetooth API (part of Windows 10/11) is used; there are no other dependencies.
 // The C runtime is linked statically, so no Visual C++ redistributable is needed.
 //
-// The helper only moves Meshtastic phone-API bytes (ToRadio/FromRadio). It never creates
-// packets itself; all transmission rules stay in the app (RadioClient / A/B test controller).
+// The helper only moves Meshtastic phone-API bytes (ToRadio/FromRadio) or MeshCore companion frames.
+// It never creates packets itself; all transmission rules stay in the app (RadioClient / A/B test controller).
 //
 // Commands (one per line, from the app):
 //   adapter                     -> "adapter ok" | "adapter off" | "adapter none" | "adapter nole"
 //   scan <seconds>              -> "dev <address> <rssi|-> <paired 0|1> <name>"... then "scan-done"
+//                                  ("devmc ..." for radios advertising the Nordic UART service used by MeshCore)
 //   pair <address> <pin>        -> "paired" | "error pair <reason>"
-//   connect <address>           -> "connected <mtu>" | "error connect <reason>"
+//   connect <address>           -> "connected <mtu> meshtastic|meshcore" | "error connect <reason>"
+//                                  (Meshtastic service first; otherwise the Nordic UART service = MeshCore companion radio)
 //   tx <hex>                    -> nothing on success | "error tx <reason>"
 //   disconnect                  -> "disconnected"
 //   location                    -> "location started" then "pos <lat> <lon> <accuracy_m> <altitude_m> <epoch_ms> <source>"...
@@ -65,6 +67,10 @@ static const guid SERVICE   { 0x6ba1b218, 0x15a8, 0x461f, { 0x9f, 0xa8, 0x5d, 0x
 static const guid TO_RADIO  { 0xf75c76d2, 0x129e, 0x4dad, { 0xa1, 0xdd, 0x78, 0x66, 0x12, 0x44, 0x01, 0xe7 } };
 static const guid FROM_RADIO{ 0x2c55e69e, 0x4993, 0x11ed, { 0xb8, 0x78, 0x02, 0x42, 0xac, 0x12, 0x00, 0x02 } };
 static const guid FROM_NUM  { 0xed9da18c, 0xa800, 0x4f66, { 0xa6, 0x70, 0xaa, 0x75, 0x47, 0xe3, 0x44, 0x53 } };
+// Nordic UART service, used by MeshCore companion radios: the app writes frames to RX, the radio notifies frames on TX.
+static const guid NUS_SERVICE{ 0x6e400001, 0xb5a3, 0xf393, { 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e } };
+static const guid NUS_RX     { 0x6e400002, 0xb5a3, 0xf393, { 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e } };
+static const guid NUS_TX     { 0x6e400003, 0xb5a3, 0xf393, { 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e } };
 
 static std::mutex outMx;
 static void emit(const std::string& line) {
@@ -140,7 +146,9 @@ static IBuffer bytesBuffer(const std::vector<uint8_t>& v) {
 static std::mutex gattMx;                   // serialises every GATT operation
 static BluetoothLEDevice device{ nullptr };
 static GattSession session{ nullptr };
-static GattCharacteristic toRadio{ nullptr }, fromRadio{ nullptr }, fromNum{ nullptr };
+static GattCharacteristic toRadio{ nullptr }, fromRadio{ nullptr }, fromNum{ nullptr }, nusTx{ nullptr };
+static bool meshcore = false;                 // connected radio uses the Nordic UART service (MeshCore)
+static bool writeNoResponse = false;
 static event_token valueToken{}, statusToken{};
 static std::atomic<bool> connected{ false };
 
@@ -188,10 +196,12 @@ static void closeDevice() {
     connected = false;
     try {
         if (fromNum && valueToken.value) fromNum.ValueChanged(valueToken);
+        if (nusTx && valueToken.value) nusTx.ValueChanged(valueToken);
         if (device && statusToken.value) device.ConnectionStatusChanged(statusToken);
     } catch (...) {}
     valueToken = {}; statusToken = {};
-    toRadio = nullptr; fromRadio = nullptr; fromNum = nullptr;
+    toRadio = nullptr; fromRadio = nullptr; fromNum = nullptr; nusTx = nullptr;
+    meshcore = false; writeNoResponse = false;
     if (session) { try { session.MaintainConnection(false); session.Close(); } catch (...) {} session = nullptr; }
     if (device) { try { device.Close(); } catch (...) {} device = nullptr; }
 }
@@ -210,6 +220,7 @@ static void cmdAdapter() {
 struct ScanState {
     std::mutex m;
     std::set<uint64_t> mesh;                 // addresses that advertised the Meshtastic service
+    std::set<uint64_t> mc;                   // addresses that advertised the Nordic UART service (MeshCore)
     std::map<uint64_t, std::string> names;
     std::map<uint64_t, int16_t> rssi;
 };
@@ -225,7 +236,10 @@ static void cmdScan(int seconds) {
         auto tok = w.Received([st](const BluetoothLEAdvertisementWatcher&, const BluetoothLEAdvertisementReceivedEventArgs& a) {
             std::lock_guard<std::mutex> g(st->m);
             uint64_t addr = a.BluetoothAddress();
-            for (const auto& u : a.Advertisement().ServiceUuids()) if (u == SERVICE) st->mesh.insert(addr);
+            for (const auto& u : a.Advertisement().ServiceUuids()) {
+                if (u == SERVICE) st->mesh.insert(addr);
+                if (u == NUS_SERVICE) st->mc.insert(addr);
+            }
             auto n = to_string(a.Advertisement().LocalName());
             if (!n.empty()) st->names[addr] = oneLine(n);
             st->rssi[addr] = a.RawSignalStrengthInDBm();
@@ -242,6 +256,12 @@ static void cmdScan(int seconds) {
         for (auto addr : st->mesh) {
             emit("dev " + addrToString(addr) + " " + std::to_string(st->rssi[addr]) + " 0 " +
                  (st->names.count(addr) ? st->names[addr] : std::string("Meshtastic")));
+            reported.insert(addr);
+        }
+        for (auto addr : st->mc) {
+            if (reported.count(addr)) continue;
+            emit("devmc " + addrToString(addr) + " " + std::to_string(st->rssi[addr]) + " 0 " +
+                 (st->names.count(addr) ? st->names[addr] : std::string("MeshCore")));
             reported.insert(addr);
         }
     }
@@ -300,7 +320,22 @@ static void cmdConnect(uint64_t addr) {
             if (session) { session.MaintainConnection(true); mtu = session.MaxPduSize(); }
             auto sr = device.GetGattServicesForUuidAsync(SERVICE, BluetoothCacheMode::Uncached).get();
             if (sr.Status() != GattCommunicationStatus::Success) fail = "could not read services (status " + std::to_string((int)sr.Status()) + ")";
-            else if (sr.Services().Size() == 0) fail = "not a Meshtastic device (service not found)";
+            else if (sr.Services().Size() == 0) {
+                auto nr = device.GetGattServicesForUuidAsync(NUS_SERVICE, BluetoothCacheMode::Uncached).get();
+                if (nr.Status() != GattCommunicationStatus::Success || nr.Services().Size() == 0)
+                    fail = "not a Meshtastic or MeshCore radio (neither service found)";
+                else {
+                    auto svc = nr.Services().GetAt(0);
+                    toRadio = findChar(svc, NUS_RX);
+                    nusTx = findChar(svc, NUS_TX);
+                    if (!toRadio || !nusTx) fail = "MeshCore (Nordic UART) characteristics missing";
+                    else {
+                        meshcore = true;
+                        auto props = toRadio.CharacteristicProperties();
+                        writeNoResponse = (props & GattCharacteristicProperties::Write) != GattCharacteristicProperties::Write;
+                    }
+                }
+            }
             else {
                 auto svc = sr.Services().GetAt(0);
                 toRadio = findChar(svc, TO_RADIO);
@@ -309,7 +344,21 @@ static void cmdConnect(uint64_t addr) {
                 if (!toRadio || !fromRadio || !fromNum) fail = "Meshtastic characteristics missing";
             }
         }
-        if (fail.empty()) {
+        if (fail.empty() && meshcore) {
+            auto st = nusTx.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue::Notify).get();
+            if (st != GattCommunicationStatus::Success) fail = "could not subscribe to the radio (status " + std::to_string((int)st) + "); pair it first (PIN on its screen, or 123456)";
+            else {
+                // Each notification is one MeshCore companion frame.
+                valueToken = nusTx.ValueChanged([](const GattCharacteristic&, const GattValueChangedEventArgs& a) {
+                    emit("rx " + toHex(bufferBytes(a.CharacteristicValue())));
+                });
+                statusToken = device.ConnectionStatusChanged([](const BluetoothLEDevice& d, const IInspectable&) {
+                    if (d.ConnectionStatus() == BluetoothConnectionStatus::Disconnected && connected.exchange(false)) emit("lost");
+                });
+                connected = true;
+            }
+        }
+        else if (fail.empty()) {
             auto st = fromNum.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue::Notify).get();
             if (st != GattCommunicationStatus::Success)
                 emit("log could not subscribe to notifications (status " + std::to_string((int)st) + "); polling instead");
@@ -321,7 +370,7 @@ static void cmdConnect(uint64_t addr) {
         }
     } catch (const hresult_error& e) { fail = err(e); }
     if (!fail.empty()) { closeDevice(); emit("error connect " + fail); return; }
-    emit("connected " + std::to_string(mtu));
+    emit("connected " + std::to_string(mtu) + (meshcore ? " meshcore" : " meshtastic"));
 }
 
 static void cmdTx(const std::string& hex) {
@@ -330,13 +379,13 @@ static void cmdTx(const std::string& hex) {
     try {
         std::lock_guard<std::mutex> g(gattMx);
         if (!connected || !toRadio) { emit("error tx not connected"); return; }
-        auto r = toRadio.WriteValueWithResultAsync(bytesBuffer(v), GattWriteOption::WriteWithResponse).get();
+        auto r = toRadio.WriteValueWithResultAsync(bytesBuffer(v), writeNoResponse ? GattWriteOption::WriteWithoutResponse : GattWriteOption::WriteWithResponse).get();
         if (r.Status() != GattCommunicationStatus::Success) {
             emit("error tx status " + std::to_string((int)r.Status()) + " (if this persists, pair the radio)");
             return;
         }
     } catch (const hresult_error& e) { emit("error tx " + err(e)); return; }
-    requestDrain();   // the radio usually has data for us after a write (e.g. the config download)
+    if (!meshcore) requestDrain();   // the radio usually has data for us after a write (e.g. the config download)
 }
 
 // ---------------------------------------------------------------- Windows location service

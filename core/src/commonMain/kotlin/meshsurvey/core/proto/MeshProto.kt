@@ -355,7 +355,8 @@ object MeshEnums {
     fun region(v: Int) = REGIONS.getOrNull(v) ?: "REGION_$v"
     fun role(v: Int) = ROLES.getOrNull(v) ?: "ROLE_$v"
     fun routingError(v: Int) = ROUTING_ERRORS[v] ?: "ERROR_$v"
-    fun nodeId(num: Long) = "!" + num.toString(16).padStart(8, '0')
+    fun nodeId(num: Long) = if (meshsurvey.core.radio.MeshCoreIds.isMeshCore(num)) meshsurvey.core.radio.MeshCoreIds.label(num)
+        else "!" + num.toString(16).padStart(8, '0')
     fun parseNodeId(s: String): Long? {
         val t = s.trim().removePrefix("!").removePrefix("0x")
         return t.toLongOrNull(16)?.takeIf { it in 1..0xfffffffeL }

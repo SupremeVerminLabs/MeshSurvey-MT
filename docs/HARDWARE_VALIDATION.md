@@ -96,6 +96,14 @@ USB GPS receiver with NMEA output.
 | HV-64 | Windows base, radio with GPS fix (or a fixed position set in the radio), no other position source chosen: the app switches to "Radio's own GPS" by itself, shows "assumed stationary" and the position age, and receptions get the radio's full-precision position, **also on the default public channel** (it is read from the radio, not from its blurred broadcasts). Export shows source RADIO and position_age_ms | Screenshot of the status line; CSV columns fix_source, position_age_ms |
 | HV-65 | Windows laptop: "Windows location" gives positions with plausible accuracy while driving; with location turned off for desktop apps, the clear refusal message appears | Screenshot + exported track |
 
+## I. MeshCore (listen-only)
+| ID | Procedure | Evidence |
+|---|---|---|
+| HV-66 | MeshCore companion radio (USB firmware) on Windows: Connect → status "MeshCore radio; reading its settings" → "Logging"; top bar shows its name with "(MC)" and voltage; Monitor shows receptions tagged "MC <freq>/BW/SF" with SNR/RSSI close to the MeshCore app's; the MeshCore phone app still receives its messages afterwards | Screenshots |
+| HV-67 | Meshtastic radio over USB after this change still reaches "Logging" (a few seconds slower: probe first) | Screenshot of the status line |
+| HV-68 | MeshCore Bluetooth companion radio on Windows: listed as "MeshCore" in Connect, pairs with its PIN, reaches "Logging" | Screenshots |
+| HV-69 | Map with MeshCore data: Known nodes shows repeaters at their advertised positions; Heard from colours points per repeater; picking one repeater in Nodes filters the tiles and draws lines to it | Screenshot |
+
 ## Results table
 | ID | Date | Firmware | Hardware | Transport/OS | Result (pass/fail/n.a.) | Evidence link | Notes |
 |---|---|---|---|---|---|---|---|

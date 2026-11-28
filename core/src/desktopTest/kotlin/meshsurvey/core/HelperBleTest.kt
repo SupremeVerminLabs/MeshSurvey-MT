@@ -114,4 +114,13 @@ class OsLocationTest {
         assertTrue(meshsurvey.core.radio.OsLocation.parse("pos 1 2 5 0 ${now - 60_000} 1", now, 0) is meshsurvey.core.radio.OsLocation.Result.Rejected)
         assertEquals(null, meshsurvey.core.radio.OsLocation.parse("rx 0a0b", now, 0))
     }
+
+    @Test fun scanLinesCarryTheProtocol() {
+        val mc = meshsurvey.core.radio.BleHelperScan.parseDevice("devmc AA:BB:CC:DD:EE:03 -70 0 MeshCore-Base")!!
+        kotlin.test.assertEquals(meshsurvey.core.radio.MeshProtocol.MESHCORE, mc.protocol)
+        kotlin.test.assertEquals("MeshCore-Base", mc.name)
+        val mt = meshsurvey.core.radio.BleHelperScan.parseDevice("dev AA:BB:CC:DD:EE:01 -61 0 Meshtastic_ee01")!!
+        kotlin.test.assertEquals(meshsurvey.core.radio.MeshProtocol.MESHTASTIC, mt.protocol)
+        kotlin.test.assertNull(meshsurvey.core.radio.BleHelperScan.parseDevice("dev AA:BB:CC:DD:EE:02 - 1 RAK4631 base")!!.protocol)
+    }
 }

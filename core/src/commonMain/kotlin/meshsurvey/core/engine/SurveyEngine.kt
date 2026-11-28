@@ -343,6 +343,9 @@ class SurveyEngine(
     override fun onNode(node: NodeRecord) {
         if (node.num == radio.info.myNodeNum) node.metrics?.let { updateMetrics(it) }
         _nodes.value = radio.nodes.toMap()
+        if (node.lat != null && node.lon != null && node.num != radio.info.myNodeNum && meshsurvey.core.util.Geo.validLatLon(node.lat, node.lon))
+            store.upsertKnownNode(meshsurvey.core.model.KnownNode("meshtastic", meshsurvey.core.proto.MeshEnums.nodeId(node.num),
+                node.longName ?: node.shortName, node.role?.let { meshsurvey.core.proto.MeshEnums.role(it) }, node.lat, node.lon, clock.wallMs(), "nodedb"))
         if (node.longName != null || node.shortName != null)
             store.upsertNodeName(node.num, node.longName, node.shortName, node.role?.let { meshsurvey.core.proto.MeshEnums.role(it) }, clock.wallMs())
     }
@@ -358,4 +361,27 @@ class SurveyEngine(
     }
 
     override fun onDebugText(text: String) { if (text.isNotBlank()) event("radio: ${text.take(160)}") }
+
+    // ---------------- MeshCore (listen-only) ----------------
+
+    override fun onMeshCoreRx(rx: meshsurvey.core.radio.MeshCore.RxPacket, phoneTimeMs: Long, duringSetup: Boolean) {
+        logger.onMeshCore(rx, phoneTimeMs, radio.info)
+        _stats.value = logger.stats
+    }
+
+    override fun onMeshCoreNode(publicKeyHex: String, type: Int, name: String?, lat: Double?, lon: Double?, fromContacts: Boolean) {
+        val pos = lat != null && lon != null && meshsurvey.core.util.Geo.validLatLon(lat, lon)
+        store.upsertKnownNode(meshsurvey.core.model.KnownNode("meshcore", publicKeyHex, name, meshsurvey.core.radio.MeshCore.nodeType(type),
+            if (pos) lat else null, if (pos) lon else null, clock.wallMs(), if (fromContacts) "contacts" else "advert"))
+        if (name != null) publicKeyHex.take(8).let { pre ->
+            val id = meshsurvey.core.radio.MeshCoreIds.fromPrefix(ByteArray(4) { i -> pre.substring(i * 2, i * 2 + 2).toInt(16).toByte() })
+            store.upsertNodeName(id, name, null, meshsurvey.core.radio.MeshCore.nodeType(type), clock.wallMs())
+        }
+        _dataVersion.value++
+    }
+
+    override fun onMeshCoreBattery(millivolts: Int) {
+        val prev = _metrics.value
+        _metrics.value = RadioMetrics(prev?.channelUtilPct, prev?.airUtilTxPct, clock.wallMs(), null, millivolts / 1000.0)
+    }
 }

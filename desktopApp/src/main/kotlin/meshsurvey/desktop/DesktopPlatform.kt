@@ -44,12 +44,13 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
     override suspend fun discoverConnections(): List<ConnectionOption> = withContext(Dispatchers.IO) {
         val list = ArrayList<ConnectionOption>()
         SerialPort.getCommPorts().forEach { p ->
-            list += ConnectionOption("serial:${p.systemPortName}", LinkKind.SERIAL, "${p.systemPortName} — ${p.descriptivePortName}")
+            list += ConnectionOption("serial:${p.systemPortName}", LinkKind.SERIAL, "${p.systemPortName} — ${p.descriptivePortName}",
+                note = "Meshtastic or MeshCore (USB companion firmware); detected automatically when connecting.")
         }
         if (list.isEmpty()) list += ConnectionOption("serial:none", LinkKind.SERIAL, "No serial ports found", available = false,
             note = "Plug the radio in with a data-capable USB cable; on Linux add yourself to the 'dialout' group.")
         list += ConnectionOption("tcp", LinkKind.TCP, "Network node (enter host above)", needsHost = true,
-            note = "Nodes with Wi-Fi/Ethernet expose the API on TCP port 4403.")
+            note = "Meshtastic nodes with Wi-Fi/Ethernet use TCP port 4403. For a MeshCore Wi-Fi companion radio, enter host:port (detected automatically).")
         list += bluetoothOptions()
         list += ConnectionOption("sim", LinkKind.SIMULATED, "Simulated radio (development only, data marked SIMULATED)")
         list
@@ -60,7 +61,7 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
         LinkKind.TCP -> {
             val h = host?.trim().orEmpty().ifEmpty { throw IllegalArgumentException("Enter the node's host name or IP") }
             val (hn, port) = h.split(":").let { it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 4403) }
-            TcpLink(hn, port, post)
+            TcpLink(hn, port, post = post)
         }
         LinkKind.BLE -> {
             val cmd = WindowsBle.command() ?: throw IllegalArgumentException(WindowsBle.unavailableReason())
@@ -69,19 +70,22 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
         else -> throw IllegalArgumentException("${option.kind.label} is not supported on desktop")
     }
 
-    /** Windows only: lists Meshtastic radios found by a short Bluetooth scan through the helper. */
+    /** Windows only: lists Meshtastic and MeshCore radios found by a short Bluetooth scan through the helper. */
     private fun bluetoothOptions(): List<ConnectionOption> {
         val cmd = WindowsBle.command()
             ?: return listOf(ConnectionOption("ble", LinkKind.BLE, "Bluetooth LE", available = false, note = WindowsBle.unavailableReason()))
         return when (val r = BleHelperScan.scan(cmd, seconds = 5)) {
             is BleScanResult.Unavailable -> listOf(ConnectionOption("ble", LinkKind.BLE, "Bluetooth LE", available = false, note = r.reason))
             is BleScanResult.Found ->
-                if (r.devices.isEmpty()) listOf(ConnectionOption("ble", LinkKind.BLE, "No Meshtastic radios found", available = false,
+                if (r.devices.isEmpty()) listOf(ConnectionOption("ble", LinkKind.BLE, "No Meshtastic or MeshCore radios found", available = false,
                     note = "Make sure the radio is on, nearby, and not connected to another phone or app (a radio accepts one Bluetooth connection at a time)."))
                 else r.devices.map { d ->
                     val extra = listOfNotNull(d.rssi?.let { "$it dBm" }, if (d.paired) "paired" else null).joinToString(", ")
-                    ConnectionOption("ble:${d.address}", LinkKind.BLE, "${d.name} (${d.address}${if (extra.isEmpty()) "" else ", $extra"})",
-                        needsPin = true, note = "Windows Bluetooth: implemented, not yet verified with a real radio.")
+                    val proto = d.protocol?.label ?: "protocol found on connect"
+                    ConnectionOption("ble:${d.address}", LinkKind.BLE, "${d.name} (${d.address}, $proto${if (extra.isEmpty()) "" else ", $extra"})",
+                        needsPin = true, note = if (d.protocol == meshsurvey.core.radio.MeshProtocol.MESHCORE)
+                            "MeshCore companion radio: listen-only. PIN is shown on its screen, or 123456 by default. Not yet verified with a real radio."
+                        else "Windows Bluetooth (verified with a T-Beam Supreme).")
                 }
         }
     }

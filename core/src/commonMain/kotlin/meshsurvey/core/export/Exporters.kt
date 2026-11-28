@@ -48,13 +48,13 @@ object Csv {
         append(row("rx_ms", "session_id", "receiver", "lat", "lon", "gps_accuracy_m", "fix_age_ms", "rssi", "snr", "packet_id",
             "from", "to", "channel", "portnum", "type", "status", "hop_start", "hop_limit", "hops_away", "relay_byte",
             "payload_len", "preset", "region", "frequency_mhz", "frequency_source", "node_rx_time", "summary", "source", "origin_device",
-            "fix_source", "position_age_ms", "confidence", "confidence_reasons"))
+            "fix_source", "position_age_ms", "confidence", "confidence_reasons", "protocol", "heard_id"))
         for (o in list) {
             val c = meshsurvey.core.quality.ConfidenceRules.classify(o)
             append(row(o.rxMs, o.sessionId, node(o.receiverNode), o.lat, o.lon, o.accuracyM, o.fixAgeMs, o.rssi, o.snr,
                 o.packetId, node(o.fromNode), node(o.toNode), o.channel, o.portnum, o.type, o.status, o.hopStart, o.hopLimit, o.hopsAway,
                 o.relayByte?.let { it.toString(16).padStart(2, '0') }, o.payloadLen, o.preset, o.region, o.frequencyMhz, o.frequencySource, o.nodeRxTime,
-                o.summary, o.source, o.originDevice, o.fixSource, o.positionAgeMs, c.cls.name, c.reasons.joinToString("; ")))
+                o.summary, o.source, o.originDevice, o.fixSource, o.positionAgeMs, c.cls.name, c.reasons.joinToString("; "), o.protocol, o.heardId))
         }
     }
 
@@ -153,7 +153,7 @@ object Bundle {
                 put("preset", s.preset); put("region", s.region); put("source", s.source.name)
                 put("duplicates_suppressed", s.duplicatesSuppressed); put("notes", s.notes)
                 put("profile_id", s.profileId); put("hw_model", s.hwModel); put("tx_power_dbm", s.txPowerDbm)
-                put("frequency_mhz", s.frequencyMhz); put("frequency_source", s.frequencySource)
+                put("frequency_mhz", s.frequencyMhz); put("frequency_source", s.frequencySource); put("protocol", s.protocol)
             } }))
             // user-entered equipment descriptions referenced by sessions (own profiles only, deleted ones included so references resolve)
             put("equipment_profiles", JsonArray(store.profiles(includeDeleted = true).filter { it.originDevice == null }.map { meshsurvey.core.model.EquipmentCodec.toJson(it) }))
@@ -165,7 +165,7 @@ object Bundle {
                 put("hop_start", o.hopStart); put("hop_limit", o.hopLimit); put("hops_away", o.hopsAway); put("relay_byte", o.relayByte)
                 put("payload_len", o.payloadLen); put("preset", o.preset); put("region", o.region); put("frequency_mhz", o.frequencyMhz)
                 put("summary", o.summary); put("source", o.source.name); put("frequency_source", o.frequencySource); put("fix_source", o.fixSource)
-                put("position_age_ms", o.positionAgeMs)
+                put("position_age_ms", o.positionAgeMs); put("protocol", o.protocol); put("heard_id", o.heardId)
             } }))
             put("track", JsonArray(tr.filter { it.originDevice == null }.map { t -> buildJsonObject {
                 put("session_id", t.sessionId); put("ms", t.ms); put("lat", t.lat); put("lon", t.lon); put("accuracy_m", t.accuracyM)
@@ -228,7 +228,7 @@ object Bundle {
                         hopsAway = o.i("hops_away"), relayByte = o.i("relay_byte"), payloadLen = o.i("payload_len"),
                         preset = o.s("preset"), region = o.s("region"), frequencyMhz = o.d("frequency_mhz"), summary = o.s("summary"),
                         source = src(o), originDevice = origin, frequencySource = o.s("frequency_source"), fixSource = o.s("fix_source"),
-                        positionAgeMs = o.l("position_age_ms")))
+                        positionAgeMs = o.l("position_age_ms"), protocol = o.s("protocol") ?: "meshtastic", heardId = o.s("heard_id")))
                     if (id > 0) nObs++ else skipped++
                 } catch (_: Exception) { skipped++ }
             }
@@ -239,7 +239,8 @@ object Bundle {
                         receiverNode = s.l("receiver_node"), linkKind = s.s("link_kind"), firmware = s.s("firmware"),
                         preset = s.s("preset"), region = s.s("region"), source = src(s), duplicatesSuppressed = s.b("duplicates_suppressed") ?: true,
                         notes = s.s("notes"), profileId = s.s("profile_id"), hwModel = s.i("hw_model"), txPowerDbm = s.i("tx_power_dbm"),
-                        frequencyMhz = s.d("frequency_mhz"), frequencySource = s.s("frequency_source"), originDevice = origin))
+                        frequencyMhz = s.d("frequency_mhz"), frequencySource = s.s("frequency_source"), originDevice = origin,
+                        protocol = s.s("protocol") ?: "meshtastic"))
                 } catch (_: Exception) { skipped++ }
             }
             root.arr("equipment_profiles").forEach { e ->

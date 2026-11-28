@@ -39,6 +39,11 @@ data class RadioInfo(
     val codingRate: Int? = null,
     /** Configured transmit power (LoRaConfig.tx_power, dBm; 0 = firmware default). Not a measured output. */
     val txPowerDbm: Int? = null,
+    /** Firmware family, detected on connect. */
+    val protocol: MeshProtocol = MeshProtocol.MESHTASTIC,
+    /** MeshCore: the radio's advertised name and full public key (hex). */
+    val nodeName: String? = null,
+    val publicKeyHex: String? = null,
 )
 
 /** A packet as handed to the rest of the app, with the phone-side receive time. */
@@ -63,6 +68,12 @@ interface RadioListener {
      * position broadcasts (firmware loops locally sent broadcasts back to the phone API).
      */
     fun onOwnPosition(pos: PositionInfo, fromConfig: Boolean) {}
+    /** MeshCore: one over-the-air packet the radio received, with its SNR/RSSI (PUSH_LOG_RX_DATA). */
+    fun onMeshCoreRx(rx: MeshCore.RxPacket, phoneTimeMs: Long, duringSetup: Boolean) {}
+    /** MeshCore: a node the radio knows (contact list) or just heard advertising itself. */
+    fun onMeshCoreNode(publicKeyHex: String, type: Int, name: String?, lat: Double?, lon: Double?, fromContacts: Boolean) {}
+    /** MeshCore: battery voltage reported by the radio. */
+    fun onMeshCoreBattery(millivolts: Int) {}
 }
 
 /**
@@ -89,6 +100,20 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
     private var lastWantConfigMs = 0L
     private var lastBootTextMs: Long? = null
 
+    // Protocol probe (stream links): a MeshCore DEVICE_QUERY is sent first; Meshtastic radios ignore it.
+    private var probing = false
+    private var probeSentMs = 0L
+    private var probeTries = 0
+    // MeshCore session
+    private var mcStage = McStage.NONE
+    private var mcStageMs = 0L
+    private var mcTries = 0
+    private var mcLastBatteryMs = 0L
+    private var mcContacts = 0
+    private enum class McStage { NONE, SELF_INFO, CONTACTS, READY }
+
+    val protocol: MeshProtocol get() = info.protocol
+
     companion object {
         /**
          * Firmware's "config only" want_config nonce (PhoneAPI SPECIAL_NONCE_ONLY_CONFIG, 2.6+): the radio sends
@@ -114,7 +139,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
      * Does not change [state]; returns false if not connected and ready.
      */
     fun requestOwnInfo(): Boolean {
-        if (state != RadioState.READY) return false
+        if (state != RadioState.READY || protocol != MeshProtocol.MESHTASTIC) return false
         val l = link ?: return false
         return l.send(MeshProto.wantConfig(NONCE_ONLY_CONFIG))
     }
@@ -127,6 +152,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         disconnect()
         link = newLink
         nodes.clear()
+        probing = false; probeTries = 0; mcStage = McStage.NONE
         info = RadioInfo(linkKind = newLink.kind)
         setState(RadioState.CONNECTING, newLink.description)
         newLink.start(this)
@@ -135,7 +161,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
     fun disconnect() {
         val l = link ?: return
         link = null
-        try { l.send(MeshProto.disconnect()) } catch (_: Exception) {}
+        if (protocol == MeshProtocol.MESHTASTIC && !probing) try { l.send(MeshProto.disconnect()) } catch (_: Exception) {}
         l.close()
         setState(RadioState.DISCONNECTED, "closed")
     }
@@ -145,6 +171,8 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         val l = link ?: return
         l.tick()
         val now = clock.monotonicMs()
+        if (probing) { tickProbe(l, now); return }
+        if (protocol == MeshProtocol.MESHCORE) { tickMeshCore(now); return }
         // Radio printed boot messages and went quiet without answering: it restarted after our request. Ask again.
         val boot = lastBootTextMs
         if (state == RadioState.DOWNLOADING_CONFIG && configItems == 0 && boot != null && boot > lastWantConfigMs &&
@@ -175,7 +203,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
      */
     fun sendData(to: Long, port: Int, payload: ByteArray, wantAck: Boolean, channel: Int = 0, hopLimit: Int? = null): Long? {
         val l = link ?: return null
-        if (state != RadioState.READY) return null
+        if (state != RadioState.READY || protocol != MeshProtocol.MESHTASTIC) return null
         require(to != BROADCAST) { "broadcast sending is not permitted by this app" }
         require(port == Port.PRIVATE) { "only A/B test payloads may be sent" }
         transmitBlock()?.let { reason -> listeners.forEach { it.onDebugText("transmission refused: $reason") }; return null }
@@ -190,8 +218,12 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
             LinkState.CONNECTING -> setState(RadioState.CONNECTING, detail)
             LinkState.CONNECTED -> {
                 configAttempts = 0
-                requestConfig("connected; requesting configuration")
                 lastHeartbeatMs = clock.monotonicMs()
+                when (link?.detectedProtocol) {
+                    MeshProtocol.MESHTASTIC -> requestConfig("connected; requesting configuration")
+                    MeshProtocol.MESHCORE -> startMeshCore(null)
+                    null -> startProbe()
+                }
             }
             LinkState.DISCONNECTED -> setState(RadioState.DISCONNECTED, detail)
             LinkState.FAILED -> setState(RadioState.FAILED, detail)
@@ -201,12 +233,20 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
     override fun onDebugText(text: String) {
         // Console text before any config arrives usually means the radio is booting: many ESP32 boards
         // restart when a USB port is opened. tick() asks for the config again once the boot output stops.
-        if (state == RadioState.DOWNLOADING_CONFIG && configItems == 0) lastBootTextMs = clock.monotonicMs()
+        if ((state == RadioState.DOWNLOADING_CONFIG && configItems == 0) || probing) lastBootTextMs = clock.monotonicMs()
         listeners.forEach { it.onDebugText(text) }
     }
 
     override fun onFromRadio(bytes: ByteArray) {
         lastRxMs = clock.monotonicMs()
+        if (protocol != MeshProtocol.MESHTASTIC) return
+        if (probing) {   // a Meshtastic frame while probing: it is a Meshtastic radio
+            probing = false
+            link?.setProtocol(MeshProtocol.MESHTASTIC)
+            configAttempts = 0
+            requestConfig("Meshtastic radio; requesting configuration")
+            return
+        }
         if (state == RadioState.DOWNLOADING_CONFIG) {
             configItems++
             if (configItems == 1 || configItems % 10 == 0) setState(RadioState.DOWNLOADING_CONFIG, "$configItems items received")
@@ -274,7 +314,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
 
     /** Re-requests the full config (used to confirm a configuration change). */
     fun refreshConfig() {
-        if (link == null) return
+        if (link == null || protocol != MeshProtocol.MESHTASTIC) return
         configAttempts = 0
         requestConfig("re-reading configuration")
     }
@@ -297,8 +337,141 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
     fun sendAdminToLocalNode(adminPayload: ByteArray): Boolean {
         val l = link ?: return false
         val me = info.myNodeNum ?: return false
-        if (state != RadioState.READY) return false
+        if (state != RadioState.READY || protocol != MeshProtocol.MESHTASTIC) return false
         return l.send(MeshProto.sendAdminLocal(me, adminPayload, random.nextLong(1, 0xffffffffL)))
+    }
+
+    // ---------------- protocol probe ----------------
+
+    private fun startProbe() {
+        probing = true
+        probeTries++
+        probeSentMs = clock.monotonicMs()
+        setState(RadioState.DOWNLOADING_CONFIG, "identifying the radio (MeshCore or Meshtastic)")
+        link?.sendMeshCore(MeshCore.deviceQuery())
+    }
+
+    private fun tickProbe(l: RadioLink, now: Long) {
+        val boot = lastBootTextMs
+        // Console output: the board is probably restarting (many ESP32 boards reset when the port opens). Wait until
+        // it has been quiet for 3 s, then ask once more.
+        if (boot != null && now - boot < 3_000) return
+        if (boot != null && boot >= probeSentMs && probeTries < 3) { lastBootTextMs = null; startProbe(); return }
+        if (now - probeSentMs < 2_500) return
+        probing = false
+        lastBootTextMs = null
+        l.setProtocol(MeshProtocol.MESHTASTIC)
+        configAttempts = 0
+        requestConfig("no MeshCore reply; requesting Meshtastic configuration")
+    }
+
+    // ---------------- MeshCore (listen-only) ----------------
+
+    override fun onMeshCoreFrame(bytes: ByteArray) {
+        lastRxMs = clock.monotonicMs()
+        if (bytes.isEmpty()) return
+        if (probing) {
+            probing = false
+            link?.setProtocol(MeshProtocol.MESHCORE)
+            startMeshCore(bytes)
+            return
+        }
+        if (protocol != MeshProtocol.MESHCORE) return
+        handleMeshCore(bytes)
+    }
+
+    private fun sendMc(frame: ByteArray): Boolean {
+        val code = frame.firstOrNull()?.toInt()?.and(0xff) ?: return false
+        // Last line of defence: only local, non-transmitting requests ever reach a MeshCore radio from this app.
+        check(code in MeshCore.ALLOWED_COMMANDS) { "MeshCore command $code is not permitted" }
+        return link?.sendMeshCore(frame) == true
+    }
+
+    private fun startMeshCore(firstFrame: ByteArray?) {
+        updateInfo(info.copy(protocol = MeshProtocol.MESHCORE))
+        mcTries = 0
+        mcContacts = 0
+        firstFrame?.let { handleMeshCore(it) }
+        mcRequestSelf()
+    }
+
+    private fun mcRequestSelf() {
+        mcTries++
+        mcStage = McStage.SELF_INFO
+        mcStageMs = clock.monotonicMs()
+        setState(RadioState.DOWNLOADING_CONFIG, "MeshCore radio; reading its settings" + if (mcTries > 1) " (try $mcTries of 3)" else "")
+        sendMc(MeshCore.appStart())
+        if (info.firmware == null) sendMc(MeshCore.deviceQuery())
+    }
+
+    private fun tickMeshCore(now: Long) {
+        when (mcStage) {
+            McStage.SELF_INFO -> if (now - mcStageMs > 8_000) {
+                if (mcTries >= 3) { mcStage = McStage.NONE; setState(RadioState.FAILED, "MeshCore radio did not answer. Close the MeshCore app if it is connected, and try again.") }
+                else mcRequestSelf()
+            }
+            McStage.CONTACTS -> if (now - mcStageMs > 15_000) mcReady("contact list incomplete ($mcContacts received)")
+            McStage.READY -> if (now - mcLastBatteryMs >= 60_000) { mcLastBatteryMs = now; sendMc(MeshCore.getBattery()) }
+            McStage.NONE -> {}
+        }
+    }
+
+    private fun mcReady(detail: String) {
+        mcStage = McStage.READY
+        mcLastBatteryMs = clock.monotonicMs()
+        sendMc(MeshCore.getBattery())
+        setState(RadioState.READY, detail)
+    }
+
+    private fun handleMeshCore(f: ByteArray) {
+        when (f[0].toInt() and 0xff) {
+            MeshCore.RESP_SELF_INFO -> MeshCore.decodeSelfInfo(f)?.let { si ->
+                val label = buildString {
+                    append("MC ")
+                    si.frequencyMhz?.let { append(trimNum(it, 3)) } ?: append("?")
+                    si.bandwidthKhz?.let { append("/BW").append(trimNum(it, 2)) }
+                    si.spreadingFactor?.let { append("/SF").append(it) }
+                }
+                updateInfo(info.copy(
+                    myNodeNum = MeshCoreIds.fromPrefix(si.publicKey.copyOfRange(0, 4)), nodeName = si.name, publicKeyHex = si.publicKey.toHexString(),
+                    preset = label, overrideFrequencyMhz = si.frequencyMhz, spreadFactor = si.spreadingFactor, codingRate = si.codingRate,
+                    txPowerDbm = si.txPowerDbm, txEnabled = true,
+                ))
+                if (mcStage == McStage.SELF_INFO) {
+                    mcStage = McStage.CONTACTS
+                    mcStageMs = clock.monotonicMs()
+                    setState(RadioState.DOWNLOADING_CONFIG, "MeshCore ${si.name}: reading known nodes")
+                    sendMc(MeshCore.getContacts())
+                }
+            }
+            MeshCore.RESP_DEVICE_INFO -> MeshCore.decodeDeviceInfo(f)?.let { d ->
+                val fw = listOfNotNull("MeshCore", d.version ?: "fw ${d.firmwareCode}", d.buildDate?.let { "($it)" }).joinToString(" ")
+                updateInfo(info.copy(firmware = fw + (d.model?.let { " · $it" } ?: "")))
+            }
+            MeshCore.RESP_CONTACTS_START -> { mcStageMs = clock.monotonicMs() }
+            MeshCore.RESP_CONTACT, MeshCore.PUSH_NEW_ADVERT -> MeshCore.decodeContact(f)?.let { c ->
+                mcContacts++
+                mcStageMs = clock.monotonicMs()
+                listeners.forEach { it.onMeshCoreNode(c.keyHex, c.type, c.name.ifEmpty { null }, c.lat, c.lon, true) }
+            }
+            MeshCore.RESP_END_OF_CONTACTS -> if (mcStage == McStage.CONTACTS) mcReady("$mcContacts known nodes")
+            MeshCore.RESP_ERR -> if (mcStage == McStage.CONTACTS) mcReady("contact list not available")
+            MeshCore.RESP_BATT_AND_STORAGE -> MeshCore.decodeBatteryMv(f)?.let { mv -> listeners.forEach { it.onMeshCoreBattery(mv) } }
+            MeshCore.PUSH_LOG_RX_DATA -> {
+                val rx = try { MeshCore.decodeRx(f) } catch (_: Exception) { null }
+                if (rx == null) { listeners.forEach { it.onDebugText("undecodable MeshCore packet (${f.size} B)") }; return }
+                rx.advert?.let { a -> listeners.forEach { it.onMeshCoreNode(a.keyHex, a.type, a.name, a.lat, a.lon, false) } }
+                listeners.forEach { it.onMeshCoreRx(rx, clock.wallMs(), state != RadioState.READY) }
+            }
+            else -> {}   // adverts by key, message-waiting notices etc.: not needed for listening
+        }
+    }
+
+    private fun ByteArray.toHexString() = joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+    private fun trimNum(v: Double, d: Int): String {
+        var m = 1.0; repeat(d) { m *= 10 }
+        val r = kotlin.math.round(v * m) / m
+        return if (r == kotlin.math.floor(r)) r.toLong().toString() else r.toString()
     }
 
     private fun applyMeta(m: DeviceMetadataInfo) = info.copy(firmware = m.firmwareVersion, hwModel = m.hwModel)

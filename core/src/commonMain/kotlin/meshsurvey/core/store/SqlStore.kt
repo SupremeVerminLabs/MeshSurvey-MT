@@ -160,9 +160,23 @@ object Schema {
             """DROP TABLE logging_window""",
             """ALTER TABLE logging_window_v6 RENAME TO logging_window""",
         ),
+        // v7 — MeshCore radios: protocol tag, the node each reception was heard from, known node positions
+        listOf(
+            """ALTER TABLE observation ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'""",
+            """ALTER TABLE observation ADD COLUMN heard_id TEXT""",
+            """ALTER TABLE survey_session ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'""",
+            """UPDATE observation SET heard_id = 'mt:!' || printf('%08x', from_node) WHERE hops_away = 0""",
+            """UPDATE observation SET heard_id = 'mt:~' || printf('%02x', relay_byte) WHERE heard_id IS NULL AND hops_away > 0 AND relay_byte > 0""",
+            """CREATE INDEX observation_heard ON observation(heard_id)""",
+            """CREATE TABLE known_node(protocol TEXT NOT NULL, node_id TEXT NOT NULL, name TEXT, kind TEXT, lat REAL, lon REAL,
+                updated_ms INTEGER NOT NULL, source TEXT NOT NULL, PRIMARY KEY(protocol, node_id))""",
+        ),
     )
     val version get() = migrations.size
 }
+
+/** SQL form of [meshsurvey.core.map.Heard.group]: MeshCore by first key byte, Meshtastic by last node-number byte. */
+private const val HEARD_GROUP_SQL = "(CASE WHEN heard_id LIKE 'mc:%' THEN substr(heard_id,1,5) ELSE 'mt:~' || substr(heard_id,-2) END)"
 
 class SqlStore(private val db: SqlDriver) : Store {
 
@@ -192,11 +206,11 @@ class SqlStore(private val db: SqlDriver) : Store {
 
     override fun insertSession(s: SurveySession) {
         db.execute("""INSERT OR IGNORE INTO survey_session(id,started_ms,ended_ms,status,receiver_node,link_kind,firmware,preset,region,source,duplicates_suppressed,notes,
-            profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source,origin_device)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source,origin_device,protocol)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             listOf(s.id, s.startedMs, s.endedMs, s.status.name, s.receiverNode, s.linkKind, s.firmware, s.preset, s.region,
                 s.source.name, b(s.duplicatesSuppressed), s.notes, s.profileId, s.hwModel, s.txPowerDbm, s.frequencyMhz, s.frequencySource,
-                o(s.originDevice)))
+                o(s.originDevice), s.protocol))
     }
 
     override fun endSession(id: String, endedMs: Long, status: SessionStatus) {
@@ -205,11 +219,11 @@ class SqlStore(private val db: SqlDriver) : Store {
 
     override fun sessions(): List<SurveySession> = db.query(
         "SELECT id,started_ms,ended_ms,status,receiver_node,link_kind,firmware,preset,region,source,duplicates_suppressed,notes," +
-            "profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source,origin_device FROM survey_session ORDER BY started_ms DESC"
+            "profile_id,hw_model,tx_power_dbm,frequency_mhz,frequency_source,origin_device,protocol FROM survey_session ORDER BY started_ms DESC"
     ) { r ->
         SurveySession(r.string(0)!!, r.long(1)!!, r.long(2), SessionStatus.valueOf(r.string(3)!!), r.long(4), r.string(5),
             r.string(6), r.string(7), r.string(8), Source.valueOf(r.string(9)!!), r.long(10) == 1L, r.string(11),
-            r.string(12), r.int(13), r.int(14), r.double(15), r.string(16), un(r.string(17)))
+            r.string(12), r.int(13), r.int(14), r.double(15), r.string(16), un(r.string(17)), r.string(18) ?: "meshtastic")
     }
 
     // ---------------- equipment profiles ----------------
@@ -250,11 +264,11 @@ class SqlStore(private val db: SqlDriver) : Store {
     override fun insertObservation(o: Observation): Long = db.insert(
         """INSERT OR IGNORE INTO observation(session_id,receiver_node,rx_ms,node_rx_time,lat,lon,accuracy_m,fix_age_ms,rssi,snr,packet_id,
             from_node,to_node,channel,portnum,type,status,hop_start,hop_limit,hops_away,relay_byte,payload_len,preset,region,frequency_mhz,
-            summary,source,origin_device,frequency_source,fix_source,position_age_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            summary,source,origin_device,frequency_source,fix_source,position_age_ms,protocol,heard_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         listOf(o.sessionId, o.receiverNode, o.rxMs, o.nodeRxTime, o.lat, o.lon, o.accuracyM, o.fixAgeMs, o.rssi, o.snr, o.packetId,
             o.fromNode, o.toNode, o.channel, o.portnum, o.type.name, o.status.name, o.hopStart, o.hopLimit, o.hopsAway, o.relayByte,
             o.payloadLen, o.preset, o.region, o.frequencyMhz, o.summary, o.source.name, o(o.originDevice), o.frequencySource, o.fixSource,
-            o.positionAgeMs)
+            o.positionAgeMs, o.protocol, o.heardId)
     )
 
     private fun where(f: ObsFilter, args: MutableList<Any?>): String {
@@ -267,6 +281,8 @@ class SqlStore(private val db: SqlDriver) : Store {
         f.maxAccuracyM?.let { w += "accuracy_m IS NOT NULL AND accuracy_m <= ?"; args += it }
         f.sessionId?.let { w += "session_id = ?"; args += it }
         f.receiverNode?.let { w += "receiver_node = ?"; args += it }
+        f.protocol?.let { w += "protocol = ?"; args += it }
+        f.heardGroups?.let { s -> w += if (s.isEmpty()) "0" else "$HEARD_GROUP_SQL IN (${s.joinToString(",") { "?" }})"; args.addAll(s) }
         f.fromNodes?.let { s -> w += if (s.isEmpty()) "0" else "from_node IN (${s.joinToString(",") { "?" }})"; args.addAll(s) }
         f.types?.let { s -> w += if (s.isEmpty()) "0" else "type IN (${s.joinToString(",") { "?" }})"; args.addAll(s.map { it.name }) }
         f.sources?.let { s -> w += if (s.isEmpty()) "0" else "source IN (${s.joinToString(",") { "?" }})"; args.addAll(s.map { it.name }) }
@@ -279,14 +295,38 @@ class SqlStore(private val db: SqlDriver) : Store {
         val args = ArrayList<Any?>()
         val sql = """SELECT id,session_id,receiver_node,rx_ms,node_rx_time,lat,lon,accuracy_m,fix_age_ms,rssi,snr,packet_id,from_node,to_node,
             channel,portnum,type,status,hop_start,hop_limit,hops_away,relay_byte,payload_len,preset,region,frequency_mhz,summary,source,origin_device,
-            frequency_source,fix_source,position_age_ms FROM observation WHERE ${where(f, args)} ORDER BY rx_ms""" + (f.limit?.let { " LIMIT $it" } ?: "")
+            frequency_source,fix_source,position_age_ms,protocol,heard_id FROM observation WHERE ${where(f, args)} ORDER BY rx_ms""" + (f.limit?.let { " LIMIT $it" } ?: "")
         return db.query(sql, args) { r ->
             Observation(r.long(0)!!, r.string(1), r.long(2), r.long(3)!!, r.long(4), r.double(5), r.double(6), r.double(7), r.long(8),
                 r.int(9), r.double(10), r.long(11)!!, r.long(12)!!, r.long(13)!!, r.int(14), r.int(15),
                 PacketType.valueOf(r.string(16)!!), RxStatus.valueOf(r.string(17)!!), r.int(18), r.int(19), r.int(20), r.int(21),
                 r.int(22), r.string(23), r.string(24), r.double(25), r.string(26), Source.valueOf(r.string(27)!!), un(r.string(28)), r.string(29), r.string(30),
-                r.long(31))
+                r.long(31), r.string(32) ?: "meshtastic", r.string(33))
         }
+    }
+
+    // ---------------- known node positions (local display only) ----------------
+
+    fun upsertKnownNode(n: meshsurvey.core.model.KnownNode) {
+        db.execute("""INSERT INTO known_node(protocol,node_id,name,kind,lat,lon,updated_ms,source) VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(protocol,node_id) DO UPDATE SET name=COALESCE(excluded.name,name), kind=COALESCE(excluded.kind,kind),
+            lat=COALESCE(excluded.lat,lat), lon=COALESCE(excluded.lon,lon), updated_ms=excluded.updated_ms, source=excluded.source""",
+            listOf(n.protocol, n.nodeId, n.name, n.kind, n.lat, n.lon, n.updatedMs, n.source))
+    }
+
+    fun knownNodes(protocol: String? = null): List<meshsurvey.core.model.KnownNode> =
+        db.query("SELECT protocol,node_id,name,kind,lat,lon,updated_ms,source FROM known_node" +
+            (if (protocol != null) " WHERE protocol=?" else "") + " ORDER BY protocol, name", listOfNotNull(protocol)) { r ->
+            meshsurvey.core.model.KnownNode(r.string(0)!!, r.string(1)!!, r.string(2), r.string(3), r.double(4), r.double(5), r.long(6)!!, r.string(7)!!)
+        }
+
+    /** Distinct heard groups with reception counts (for the map's per-node filter). */
+    fun heardGroupCounts(protocol: String? = null): Map<String, Int> {
+        val args = ArrayList<Any?>()
+        val w = "heard_id IS NOT NULL" + (protocol?.let { args += it; " AND protocol = ?" } ?: "")
+        return db.query("SELECT $HEARD_GROUP_SQL AS g, COUNT(*) FROM observation WHERE $w GROUP BY g ORDER BY 2 DESC", args) { r ->
+            r.string(0)!! to (r.int(1) ?: 0)
+        }.toMap()
     }
 
     override fun countObservations(f: ObsFilter): Int {
