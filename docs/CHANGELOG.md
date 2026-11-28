@@ -3,6 +3,21 @@
 Verification status keys: **Implemented** · **Compiled** (by a real compiler; says where) · **Simulator tested** ·
 **Integration tested** · **Hardware tested** (physical radio; says which) · **Unverified**.
 
+## Unreleased: GPS accuracy, History tab, tidier Settings, 2026-11-27
+
+**Unit tested (142 local tests), compiled and rendered by CI; not yet checked on hardware.**
+
+* **Radio GPS accuracy:** the radio reports DOP/satellites only in its own position broadcasts (its NodeInfo carries none —
+  confirmed in firmware `TypeConversions::ConvertToPosition`), which with default settings come every 15 min to hours. Now the
+  last report is kept for 24 h (was 1 h) with its age shown, saved per radio so a restart doesn't lose it, and filled in by a
+  second connected radio that hears the broadcast over the air. The top bar says "Radio GPS ≈±8 m", "Radio GPS · 7 sats",
+  "Fixed position" or "accuracy pending" instead of "accuracy unknown". Recorded accuracy stays null until a real report exists.
+* **History tab:** one entry per local calendar day, named by date and the place mostly covered (offline GeoNames extract,
+  CC BY 4.0, `data/resources/places`), with time span, receptions, nodes, best SNR, distance, presets, radios. Opening a day shows
+  the map for that day only (all layers, filters and prediction comparison).
+* **Settings:** collapsible groups with a one-line summary each; only the active position source shows its explanation.
+* **Monitor details:** label/value lines (Radio, Channel, Frequency, Position, Logged, Airtime, Power).
+
 ## Unreleased: Dark theme, phone-width layout, map crash fix, 2026-11-27
 
 **Compiled and rendered by CI (screens job, simulated data); not yet checked on a real phone.**
