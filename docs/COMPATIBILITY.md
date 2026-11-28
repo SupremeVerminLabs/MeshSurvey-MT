@@ -8,6 +8,8 @@ Please report results (device, firmware, transport, OS) so the table fills with 
 |---|---|---|---|---|---|
 | 2026-11-27 | LilyGO T-Echo (nRF52), firmware not recorded | Windows, USB | run 46090544108 ("Position sources…") | Connects, receives and logs packets; **radio's own GPS** used as receiver position | Firmware version; full-precision radio GPS (newer build); Bluetooth; RSSI/SNR vs official app (HV-10/11) |
 | 2026-11-25 | not recorded | Windows (earlier build) | — | Connected and showed packets | device/transport not recorded |
+| 2026-11-27 | LilyGO T-Beam Supreme (ESP32-S3), !33601b74, firmware 2.7.15 | Windows, USB | run 46099687849 | Connects (175 config items), logs packets with RSSI/SNR, radio GPS used as position (6 satellites; accuracy unknown) | connect time; HV-10/11 comparison |
+| 2026-11-27 | LilyGO T-Beam Supreme (ESP32-S3), firmware 2.7.15 | Windows, **Bluetooth** (helper; PIN from screen) | run 46099687849 | Found, paired, connected, logging | reconnect after link loss (HV-62) |
 
 Levels used below: **verified** (a user tested it), **expected** (same chip family *and* connection path as a verified device),
 **targeted** (implemented with the official API, untested).

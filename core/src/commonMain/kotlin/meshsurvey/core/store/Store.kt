@@ -29,6 +29,8 @@ data class ObsFilter(
     val types: Set<PacketType>? = null,
     val sources: Set<Source>? = null,
     val sessionId: String? = null,
+    /** Only receptions by this radio (node number); null = all receivers. */
+    val receiverNode: Long? = null,
     val withPositionOnly: Boolean = false,
     val bbox: DoubleArray? = null, // latMin, latMax, lonMin, lonMax
     val limit: Int? = null,

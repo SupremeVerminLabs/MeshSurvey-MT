@@ -69,6 +69,8 @@ data class MapFilter(
     val minSnr: Double? = null,
     val maxAccuracyM: Double? = null,
     val onlyMyDevices: Boolean = false,
+    /** Only receptions by this radio; null = all of this device's radios (and imported data). */
+    val receiverNode: Long? = null,
 )
 
 private class MapData(
@@ -203,7 +205,7 @@ private fun obsFilter(model: UiModel, f: MapFilter): ObsFilter {
     val now = model.engine.clock.wallMs()
     val mine = if (f.onlyMyDevices) model.engine.store.testDevices().map { it.nodeNum }.toSet() else null
     return ObsFilter(fromMs = f.range.ms?.let { now - it }, preset = f.preset, minSnr = f.minSnr,
-        maxAccuracyM = f.maxAccuracyM, fromNodes = mine, withPositionOnly = true, limit = 50_000)
+        maxAccuracyM = f.maxAccuracyM, fromNodes = mine, withPositionOnly = true, limit = 50_000, receiverNode = f.receiverNode)
 }
 
 private fun load(model: UiModel, f: MapFilter): MapData {
@@ -244,6 +246,9 @@ private fun FilterBar(model: UiModel, presets: List<String>) {
         Menu(f.maxAccuracyM?.let { "GPS ≤ ${it.toInt()} m" } ?: "Any GPS accuracy",
             listOf("Any GPS accuracy" to { set(f.copy(maxAccuracyM = null)) }) + listOf(10.0, 25.0, 50.0).map { v -> "GPS ≤ ${v.toInt()} m" to { set(f.copy(maxAccuracyM = v)) } })
         FilterChip(f.onlyMyDevices, { set(f.copy(onlyMyDevices = !f.onlyMyDevices)) }, { Text("Remembered targets only") })
+        val receivers = remember(model.station.receivers.value.size) { model.engine.store.sessions().mapNotNull { it.receiverNode }.distinct() }
+        if (receivers.size > 1) Menu(f.receiverNode?.let { "Receiver ${MeshEnums.nodeId(it)}" } ?: "All receivers",
+            listOf("All receivers" to { set(f.copy(receiverNode = null)) }) + receivers.map { n -> MeshEnums.nodeId(n) to { set(f.copy(receiverNode = n)) } })
     }
 }
 

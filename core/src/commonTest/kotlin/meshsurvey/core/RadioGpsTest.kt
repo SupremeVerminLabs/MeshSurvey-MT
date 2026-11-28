@@ -45,6 +45,20 @@ class RadioGpsTest {
         assertTrue(r.status.contains("assumed stationary"))
     }
 
+    @Test fun accuracyIsEstimatedFromTheBroadcastDopWhileThePositionComesFromNodeInfo() {
+        val c = ManualClock(); val r = Rec(c)
+        r.src.onReport(PositionInfo(45.0, -75.0, 50, c.wallMs() / 1000 - 10, 2, null, 0, null, null), fromConfig = true)   // NodeInfo: no quality fields
+        r.src.tick(); assertNull(r.fixes.last().accuracyM); assertTrue(r.status.contains("not reported yet"))
+        r.src.onReport(PositionInfo(45.02, -75.0, 50, null, 2, null, 0, 6, 13, pdop = 240))                              // blurred broadcast, PDOP 2.4, 6 sats
+        r.src.tick()
+        assertEquals(45.0, r.fixes.last().lat)                      // position still the precise one
+        assertEquals(12.0, r.fixes.last().accuracyM)                // 2.4 x 5 m
+        r.src.onReport(PositionInfo(45.0, -75.0, 50, c.wallMs() / 1000, 2, null, 0, null, null), fromConfig = true)
+        assertTrue(r.status.contains("6 satellites"))
+        c.advance(3_700_000); r.src.tick()
+        assertNull(r.fixes.last().accuracyM)                        // an estimate older than an hour is dropped
+    }
+
     @Test fun heldFixesCarryTheRealPositionTime() {
         val c = ManualClock()
         val r = Rec(c)

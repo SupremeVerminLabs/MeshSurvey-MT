@@ -34,6 +34,10 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import meshsurvey.core.engine.SurveyEngine
+import meshsurvey.core.engine.Station
+import meshsurvey.core.proto.MeshEnums
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.foundation.clickable
 import meshsurvey.core.model.Fix
 import meshsurvey.core.model.FixSource
 import meshsurvey.core.model.Source
@@ -42,7 +46,11 @@ import meshsurvey.core.radio.RadioState
 enum class Tab(val label: String) { MAP("Map"), MONITOR("Monitor"), TEST("Test") }
 
 /** UI-wide state that outlives tab switches. */
-class UiModel(val engine: SurveyEngine, val platform: PlatformServices, scope: CoroutineScope) {
+class UiModel(val station: Station, val platform: PlatformServices, scope: CoroutineScope) {
+    /** The radio the screens currently show (each connected radio has its own engine). */
+    var engine by mutableStateOf(station.primary)
+    /** Which connection option each engine was connected with, to refuse connecting the same radio twice. */
+    val connectedOption = mutableStateMapOf<SurveyEngine, String>()
     val tiles = TileLoader(platform, scope)
     val map = MapState()
     var mapFilter by mutableStateOf(MapFilter())
@@ -55,13 +63,29 @@ class UiModel(val engine: SurveyEngine, val platform: PlatformServices, scope: C
 
     fun startGps(opt: GpsOption, manual: Triple<Double, Double, Double?>? = null) {
         platform.stopGps()
-        engine.radioGps.stop()
+        station.receivers.value.forEach { it.radioGps.stop() }
         gpsOption = opt
-        if (opt.id == RADIO_GPS_ID) engine.radioGps.start({ engine.onFix(it) }, { gpsStatus = it })
-        else platform.startGps(opt, manual, { engine.onFix(it) }, { gpsStatus = it })
+        // The station has one position; it applies to every connected radio. Radio GPS uses the selected radio's GPS
+        // (or the first radio that reports a position).
+        if (opt.id == RADIO_GPS_ID) {
+            val src = engine.takeIf { it.radioPosition.value != null } ?: station.receivers.value.firstOrNull { it.radioPosition.value != null } ?: engine
+            radioGpsEngine = src
+            src.radioGps.start({ station.onFix(it) }, { gpsStatus = (if (station.receivers.value.size > 1) "${src.radioLabel()}: " else "") + it })
+        } else platform.startGps(opt, manual, { station.onFix(it) }, { gpsStatus = it })
     }
 
-    fun stopGps() { platform.stopGps(); engine.radioGps.stop(); gpsOption = null; gpsStatus = "GPS off" }
+    /** The radio whose GPS is the station position (when radio GPS is chosen). */
+    var radioGpsEngine: SurveyEngine? = null
+
+    fun stopGps() { platform.stopGps(); station.receivers.value.forEach { it.radioGps.stop() }; gpsOption = null; gpsStatus = "GPS off" }
+
+    /** Disconnects the selected radio; additional radios are removed, the first one stays as the empty slot. */
+    fun disconnectSelected() {
+        val e = engine
+        connectedOption.remove(e)
+        station.removeReceiver(e)
+        if (e !== station.primary) engine = station.receivers.value.lastOrNull { it.connectionWanted.value } ?: station.primary
+    }
 }
 
 /**
@@ -69,24 +93,31 @@ class UiModel(val engine: SurveyEngine, val platform: PlatformServices, scope: C
  * tick from its Application/foreground service instead so logging survives the activity.
  */
 @Composable
-fun MeshSurveyApp(engine: SurveyEngine, platform: PlatformServices, runTickLoop: Boolean) {
+fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boolean) {
     val scope = rememberCoroutineScope()
-    val model = remember { UiModel(engine, platform, scope) }
+    val model = remember { UiModel(station, platform, scope) }
+    val engine = model.engine
     var tab by remember { mutableStateOf(Tab.MAP) }
     var showSettings by remember { mutableStateOf(false) }
 
     // 1 Hz engine tick (heartbeats, test scheduling, ACK timeouts, simulator) on the UI thread.
     if (runTickLoop) LaunchedEffect(Unit) {
-        while (true) { delay(1000); engine.tick() }
+        while (true) { delay(1000); station.tick() }
     }
 
-    val wanted by engine.connectionWanted.collectAsState()
-    LaunchedEffect(wanted) { platform.onSurveyActive(wanted) }
+    // Background logging stays on while any radio is connected; radio GPS is picked up from whichever radio reports a position.
+    LaunchedEffect(Unit) {
+        var last: Boolean? = null
+        while (true) {
+            val any = station.anyWanted()
+            if (any != last) { platform.onSurveyActive(any); last = any }
+            if (model.gpsOption == null && station.receivers.value.any { it.radioPosition.value != null }) model.startGps(RADIO_GPS_OPTION)
+            delay(1000)
+        }
+    }
     LaunchedEffect(Unit) { if (model.gpsOption == null) platform.defaultGps()?.let { model.startGps(it) } }
     // No position source chosen (typical for a Windows base station) and the radio knows where it is:
     // use the radio's own position automatically. Android keeps the phone GPS, which suits driving.
-    val radioPos by engine.radioPosition.collectAsState()
-    LaunchedEffect(radioPos) { if (radioPos != null && model.gpsOption == null) model.startGps(RADIO_GPS_OPTION) }
 
     MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF1B5E7A), secondary = Color(0xFF2E7D32))) {
         Surface(Modifier.fillMaxSize()) {
@@ -129,7 +160,15 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
     ) {
         Text("MeshSurvey ${engine.edition.name.lowercase().replaceFirstChar { it.uppercase() }}", color = Color.White,
             fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Chip(radioLabel(radio.state), radioColor(radio.state))
+        val receivers by model.station.receivers.collectAsState()
+        if (receivers.size <= 1) Chip(radioLabel(radio.state), radioColor(radio.state))
+        else receivers.forEach { e ->
+            val st by e.radioStatus.collectAsState()
+            // one chip per radio; the outlined one is shown in the screens below; tap to switch
+            Text((if (e === engine) "▸ " else "") + "${e.radioLabel()} · ${radioLabel(st.state)}", color = Color.White, fontSize = 12.sp,
+                modifier = Modifier.background(radioColor(st.state), RoundedCornerShape(10.dp)).clickable { model.engine = e }
+                    .padding(horizontal = 8.dp, vertical = 2.dp))
+        }
         Chip(gpsLabel(fix, engine), if (fix != null) Color(0xFF2E7D32) else Color(0xFF616161))
         if (simulated) Chip("SIMULATED", Color(0xFFB71C1C))
         Box(Modifier.weight(1f))
@@ -222,3 +261,8 @@ fun StartPanel(model: UiModel, onChoose: (Tab, meshsurvey.core.model.TestRole?) 
     }
     if (connectOpen) ConnectDialog(model) { connectOpen = false }
 }
+
+
+/** Short name for a radio in chips and labels: its node id, or its connection while unknown. */
+fun SurveyEngine.radioLabel(): String =
+    radio.info.myNodeNum?.let { n -> store.nodeNames()[n]?.shortName?.takeIf { it.isNotBlank() } ?: MeshEnums.nodeId(n) } ?: "radio"

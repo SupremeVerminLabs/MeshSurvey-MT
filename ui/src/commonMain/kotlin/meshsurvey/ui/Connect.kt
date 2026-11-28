@@ -56,7 +56,12 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("${radioLabel(radio.state)} ${radio.detail}" + (engine.reconnectInS?.let { " · reconnecting in $it s" } ?: ""), fontSize = 13.sp)
-        if (wanted) Button(onClick = { engine.disconnect() }) { Text("Disconnect") }
+        val receivers by model.station.receivers.collectAsState()
+        if (wanted) Button(onClick = { model.disconnectSelected() }) {
+            Text(if (receivers.size > 1) "Disconnect ${engine.radioLabel()}" else "Disconnect")
+        }
+        if (wanted) Text("Connecting another radio below adds it alongside this one; each radio logs separately " +
+            "(it can be on a different preset). Tap a radio's chip in the top bar to view it.", fontSize = 11.sp, color = Color.DarkGray)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(onClick = { scan() }, enabled = !scanning) { Text(if (scanning) "Searching…" else "Search again") }
             if (options.any { it.needsHost }) OutlinedTextField(host, { host = it }, label = { Text("Network node host (TCP)") }, singleLine = true,
@@ -72,8 +77,12 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
                     Text("${o.kind.label}: ${o.label}", color = if (o.available) Color.Unspecified else Color.Gray)
                     o.note?.let { Text(it, fontSize = 11.sp, color = Color.DarkGray) }
                 }
-                Button(enabled = o.available && !wanted, onClick = {
+                val inUse = model.connectedOption.any { (e, id) -> id == o.id && e.connectionWanted.value && o.kind != LinkKind.SIMULATED }
+                Button(enabled = o.available && !inUse, onClick = {
                     try {
+                        // First radio uses the empty slot; any further radio gets its own engine and becomes the selected one.
+                        val target = if (!engine.connectionWanted.value) engine else model.station.addReceiver()
+                        val engine = target
                         val h = if (o.needsPin) pin else host
                         val peer = model.peerSendsTests
                         val simFactory: () -> RadioLink = {
@@ -82,12 +91,14 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
                         val realFactory: () -> RadioLink = { platform.openLink(o, h) }
                         if (o.kind != LinkKind.SIMULATED) realFactory() // validate now so errors show immediately
                         engine.connect(if (o.kind == LinkKind.SIMULATED) simFactory else realFactory); msg = null
+                        model.connectedOption[engine] = o.id
+                        model.engine = engine
                         if (model.gpsOption == null || model.gpsStatus.startsWith("Location permission")) {
                             if (o.kind == LinkKind.SIMULATED) model.gpsOptionsSim() else platform.defaultGps()?.let { model.startGps(it) }
                         }
                         onConnected()
                     } catch (e: Exception) { msg = e.message ?: e.toString() }
-                }) { Text("Connect") }
+                }) { Text(when { inUse -> "Connected"; wanted -> "Connect another"; else -> "Connect" }) }
             }
         }
         if (radio.state == RadioState.DISCONNECTED && options.isEmpty() && !scanning) Text("No radios found.", fontSize = 12.sp)

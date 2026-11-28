@@ -174,7 +174,7 @@ object Bundle {
             put("clock_events", JsonArray(store.clockEvents().map { e -> buildJsonObject {
                 put("wall_ms", e.wallMs); put("kind", e.kind.name); put("magnitude_ms", e.magnitudeMs); put("session_id", e.sessionId)
             } }))
-            put("logging_windows", JsonArray(store.windows(null).map { w -> buildJsonObject { put("start_ms", w.startMs); put("end_ms", w.endMs) } }))
+            put("logging_windows", JsonArray(store.windows(null).map { w -> buildJsonObject { put("start_ms", w.startMs); put("end_ms", w.endMs); put("receiver_node", w.receiverNode) } }))
             put("test_sessions", JsonArray(tsessions.filter { it.originDevice == null }.map { s -> buildJsonObject {
                 put("id", s.id); put("role", s.role.name); put("mode", s.mode.name); put("peer_node", s.peerNode); put("local_node", s.localNode)
                 put("started_ms", s.startedMs); put("ended_ms", s.endedMs); put("interval_s", s.intervalS); put("duration_s", s.durationS)
@@ -254,7 +254,7 @@ object Bundle {
             }
             root.arr("logging_windows").forEach { e -> val w = e.jsonObject
                 val s = w.l("start_ms"); val en = w.l("end_ms")
-                if (s != null && en != null && en >= s) { store.insertWindow(LoggingWindow(s, en, origin)); nW++ } else skipped++
+                if (s != null && en != null && en >= s) { store.insertWindow(LoggingWindow(s, en, origin, w.l("receiver_node"))); nW++ } else skipped++
             }
             root.arr("test_sessions").forEach { e -> val s = e.jsonObject
                 try {

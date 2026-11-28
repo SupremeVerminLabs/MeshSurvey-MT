@@ -71,6 +71,8 @@ data class PositionInfo(
     val satsInView: Int?,
     /** 1..32; fewer bits = deliberately blurred position. Absent/0 = not stated. */
     val precisionBits: Int?,
+    /** PDOP x 100 (firmware default position flags send PDOP rather than HDOP). */
+    val pdop: Int? = null,
 )
 
 class NodeRecord(
@@ -244,6 +246,7 @@ object MeshProto {
             groundSpeedMps = p.f(15)?.int,
             satsInView = p.f(19)?.int,
             precisionBits = p.f(23)?.int,
+            pdop = p.f(11)?.int,
         )
     }
 

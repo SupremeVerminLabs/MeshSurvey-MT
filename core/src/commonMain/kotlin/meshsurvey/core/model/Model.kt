@@ -279,7 +279,8 @@ data class TestRx(
 )
 
 /** Interval during which a device's app was connected to its radio (used to judge "missing" receptions). */
-data class LoggingWindow(val startMs: Long, val endMs: Long, val originDevice: String?)
+/** A period during which a receiver was connected and logging. [receiverNode] null = recorded before multi-radio support. */
+data class LoggingWindow(val startMs: Long, val endMs: Long, val originDevice: String?, val receiverNode: Long? = null)
 
 data class ImportRecord(val sha256: String, val importedMs: Long, val originDevice: String?, val kind: String, val rows: Int)
 

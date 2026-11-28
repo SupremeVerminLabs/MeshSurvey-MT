@@ -150,6 +150,16 @@ object Schema {
         listOf(
             """ALTER TABLE survey_session ADD COLUMN origin_device TEXT NOT NULL DEFAULT ''""",
         ),
+        // v6 — several radios at once: logging windows per receiver (table rebuilt for the new unique key)
+        listOf(
+            """CREATE TABLE logging_window_v6(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL,
+                origin_device TEXT NOT NULL DEFAULT '', receiver_node INTEGER NOT NULL DEFAULT -1,
+                UNIQUE(origin_device, receiver_node, start_ms))""",
+            """INSERT INTO logging_window_v6(start_ms,end_ms,origin_device,receiver_node) SELECT start_ms,end_ms,origin_device,-1 FROM logging_window""",
+            """DROP TABLE logging_window""",
+            """ALTER TABLE logging_window_v6 RENAME TO logging_window""",
+        ),
     )
     val version get() = migrations.size
 }
@@ -256,6 +266,7 @@ class SqlStore(private val db: SqlDriver) : Store {
         f.minRssi?.let { w += "rssi >= ?"; args += it }
         f.maxAccuracyM?.let { w += "accuracy_m IS NOT NULL AND accuracy_m <= ?"; args += it }
         f.sessionId?.let { w += "session_id = ?"; args += it }
+        f.receiverNode?.let { w += "receiver_node = ?"; args += it }
         f.fromNodes?.let { s -> w += if (s.isEmpty()) "0" else "from_node IN (${s.joinToString(",") { "?" }})"; args.addAll(s) }
         f.types?.let { s -> w += if (s.isEmpty()) "0" else "type IN (${s.joinToString(",") { "?" }})"; args.addAll(s.map { it.name }) }
         f.sources?.let { s -> w += if (s.isEmpty()) "0" else "source IN (${s.joinToString(",") { "?" }})"; args.addAll(s.map { it.name }) }
@@ -301,12 +312,13 @@ class SqlStore(private val db: SqlDriver) : Store {
     }
 
     override fun insertWindow(w: LoggingWindow) {
-        db.execute("INSERT OR REPLACE INTO logging_window(start_ms,end_ms,origin_device) VALUES(?,?,?)", listOf(w.startMs, w.endMs, o(w.originDevice)))
+        db.execute("INSERT OR REPLACE INTO logging_window(start_ms,end_ms,origin_device,receiver_node) VALUES(?,?,?,?)",
+            listOf(w.startMs, w.endMs, o(w.originDevice), w.receiverNode ?: -1L))
     }
 
     override fun windows(originDevice: String?): List<LoggingWindow> =
-        db.query("SELECT start_ms,end_ms,origin_device FROM logging_window WHERE origin_device=? ORDER BY start_ms", listOf(o(originDevice))) {
-            LoggingWindow(it.long(0)!!, it.long(1)!!, un(it.string(2)))
+        db.query("SELECT start_ms,end_ms,origin_device,receiver_node FROM logging_window WHERE origin_device=? ORDER BY start_ms", listOf(o(originDevice))) {
+            LoggingWindow(it.long(0)!!, it.long(1)!!, un(it.string(2)), it.long(3)?.takeIf { n -> n != -1L })
         }
 
     // ---------------- A/B ----------------

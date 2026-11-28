@@ -21,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import meshsurvey.core.engine.Edition
 import meshsurvey.core.engine.SurveyEngine
+import meshsurvey.core.engine.Station
 import meshsurvey.core.preset.FileBackupStore
 import meshsurvey.core.store.AndroidSqlDriver
 import meshsurvey.core.store.SqlStore
@@ -29,16 +30,17 @@ import meshsurvey.ui.MeshSurveyApp
 
 /** Owns the engine for the whole process and runs its 1 Hz tick independent of any activity. */
 class MeshSurveyApplication : Application() {
-    lateinit var engine: SurveyEngine; private set
+    lateinit var station: Station; private set
+    val engine: SurveyEngine get() = station.primary
     lateinit var platform: AndroidPlatform; private set
     private val scope = MainScope()
 
     override fun onCreate() {
         super.onCreate()
-        engine = SurveyEngine(SqlStore(AndroidSqlDriver(this)), JvmClock(), Edition.LITE, BuildConfig.VERSION_NAME,
+        station = Station(SqlStore(AndroidSqlDriver(this)), JvmClock(), Edition.LITE, BuildConfig.VERSION_NAME,
             configBackups = FileBackupStore(java.io.File(filesDir, "preset-backups")))
         platform = AndroidPlatform(this, engine)
-        scope.launch { while (true) { delay(1000); engine.tick() } }
+        scope.launch { while (true) { delay(1000); station.tick() } }
     }
 }
 
@@ -91,11 +93,11 @@ class MainActivity : ComponentActivity() {
             override fun open(done: (String?) -> Unit) { pendingOpen = done; openLauncher.launch(arrayOf("application/json", "text/*", "*/*")) }
             override fun copyIn(dest: java.io.File, done: (String?) -> Unit) { pendingCopy = dest to done; copyLauncher.launch(arrayOf("*/*")) }
         }
-        setContent { MeshSurveyApp(app.engine, app.platform, runTickLoop = false) }
+        setContent { MeshSurveyApp(app.station, app.platform, runTickLoop = false) }
     }
 
     /** No unattended transmission: leaving the screen stops automated tests. Passive logging continues. */
-    override fun onStop() { super.onStop(); app.engine.onAppBackground() }
+    override fun onStop() { super.onStop(); app.station.onAppBackground() }
 }
 
 /**

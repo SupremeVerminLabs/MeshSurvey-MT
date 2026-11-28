@@ -57,10 +57,17 @@ class SurveyEngine(
     loggerConfig: LoggerConfig = LoggerConfig(),
     /** Durable second copy of temporary preset changes (platforms pass a file-based store). */
     val configBackups: ConfigBackupStore = MemoryBackupStore(),
+    /**
+     * One engine per connected radio. The primary engine does the once-per-app chores (crash recovery, backup
+     * reconciliation, recording app suspensions); additional engines are created by [Station] for more radios.
+     */
+    val primary: Boolean = true,
+    /** State shared by all engines of one app (equipment profile list). */
+    val shared: SharedState = SharedState(store),
 ) : RadioListener {
 
     val deviceId: String = store.getMeta("device_id") ?: newId(bytes = 6).also { store.setMeta("device_id", it) }
-    val recoveredOnStart: Int = store.recoverInterrupted(clock.wallMs())
+    val recoveredOnStart: Int = if (primary) store.recoverInterrupted(clock.wallMs()) else 0
 
     val radio = RadioClient(clock)
     /** The connected radio's own position as a receiver position source (stationary receivers). */
@@ -71,22 +78,23 @@ class SurveyEngine(
     private var lastOwnInfoPollMono = 0L
 
     // ---------------- equipment profiles (optional, user-entered) ----------------
-    private val _profiles = MutableStateFlow(store.profiles())
-    val profiles: StateFlow<List<EquipmentProfile>> = _profiles
-    private val _activeProfileId = MutableStateFlow(store.getMeta("active_profile_id")?.ifEmpty { null })
+    val profiles: StateFlow<List<EquipmentProfile>> = shared.profiles
+    /** Each radio has its own active profile (keyed by node number), so two radios can carry two antennas. */
+    private fun profileKey(node: Long?) = if (node == null) "active_profile_id" else "active_profile_id:$node"
+    private val _activeProfileId = MutableStateFlow(if (primary) store.getMeta("active_profile_id")?.ifEmpty { null } else null)
     /** Profile recorded with new survey sessions (null = none). */
     val activeProfileId: StateFlow<String?> = _activeProfileId
 
     fun saveProfile(p: EquipmentProfile) {
         val now = clock.wallMs()
         store.upsertProfile(p.copy(createdMs = if (p.createdMs == 0L) now else p.createdMs, updatedMs = now, originDevice = null))
-        _profiles.value = store.profiles()
+        shared.refreshProfiles()
     }
 
     fun deleteProfile(id: String) {
         store.deleteProfile(id)
         if (_activeProfileId.value == id) setActiveProfile(null)
-        _profiles.value = store.profiles()
+        shared.refreshProfiles()
     }
 
     /**
@@ -96,11 +104,11 @@ class SurveyEngine(
     fun setActiveProfile(id: String?) {
         if (id == _activeProfileId.value) return
         _activeProfileId.value = id
-        store.setMeta("active_profile_id", id ?: "")
+        store.setMeta(profileKey(radio.info.myNodeNum), id ?: "")
         if (logger.session != null && radio.isReady) {
             logger.endSession()
             val s = logger.startSession(radio.info, source(), id)
-            event("Equipment profile changed to ${_profiles.value.firstOrNull { it.id == id }?.name ?: "none"}; new session ${s.id.take(6)}")
+            event("Equipment profile changed to ${profiles.value.firstOrNull { it.id == id }?.name ?: "none"}; new session ${s.id.take(6)}")
         }
     }
     val logger = ReceptionLogger(store, clock, loggerConfig)
@@ -167,7 +175,7 @@ class SurveyEngine(
             wasAuto = it.autoRunning
         }
         presets.addListener { _preset.value = it; it?.let { c -> event("Preset change ${c.targetPreset}: ${c.status}${c.note?.let { n -> " ($n)" } ?: ""}") } }
-        val recoveredBackups = presets.reconcileBackups()
+        val recoveredBackups = if (primary) presets.reconcileBackups() else 0
         if (recoveredBackups > 0) event("Recovered $recoveredBackups configuration backup(s) missing from the database")
         _preset.value = presets.open
         reference.addListener { r -> _testRx.value = (listOf(r) + _testRx.value).take(100); _dataVersion.value++ }
@@ -236,7 +244,7 @@ class SurveyEngine(
         val ws = windowStart
         val now = clock.wallMs()
         if (ws != null && now - lastWindowWrite >= 30_000) {
-            store.insertWindow(LoggingWindow(ws, now, null)); lastWindowWrite = now
+            store.insertWindow(LoggingWindow(ws, now, null, radio.info.myNodeNum)); lastWindowWrite = now
         }
     }
 
@@ -256,12 +264,12 @@ class SurveyEngine(
         val jump = (wall - lw) - gap
         val sid = logger.session?.id
         if (gap > TICK_GAP_MS) {
-            store.insertClockEvent(meshsurvey.core.model.ClockEvent(wallMs = wall, kind = meshsurvey.core.model.ClockEventKind.TICK_GAP, magnitudeMs = gap, sessionId = sid))
+            if (primary) store.insertClockEvent(meshsurvey.core.model.ClockEvent(wallMs = wall, kind = meshsurvey.core.model.ClockEventKind.TICK_GAP, magnitudeMs = gap, sessionId = sid))
             _timing.value = _timing.value.let { it.copy(tickGaps = it.tickGaps + 1, longestGapMs = maxOf(it.longestGapMs, gap)) }
             event("App was suspended for ${gap / 1000} s" + if (sid != null) " during logging (receptions in that time may be missing)" else "")
         }
         if (kotlin.math.abs(jump) > CLOCK_JUMP_MS) {
-            store.insertClockEvent(meshsurvey.core.model.ClockEvent(wallMs = wall, kind = meshsurvey.core.model.ClockEventKind.CLOCK_JUMP, magnitudeMs = jump, sessionId = sid))
+            if (primary) store.insertClockEvent(meshsurvey.core.model.ClockEvent(wallMs = wall, kind = meshsurvey.core.model.ClockEventKind.CLOCK_JUMP, magnitudeMs = jump, sessionId = sid))
             _timing.value = _timing.value.let { it.copy(clockJumps = it.clockJumps + 1, lastJumpMs = jump) }
             event("System clock changed by ${jump / 1000} s; timestamps before and after are not directly comparable")
         }
@@ -281,14 +289,16 @@ class SurveyEngine(
         val wasReady = logger.radioReady
         if (state == RadioState.READY && !wasReady) {
             logger.radioReady = true
+            // this radio's own remembered profile, if one was set for its node number
+            store.getMeta(profileKey(radio.info.myNodeNum))?.let { _activeProfileId.value = it.ifEmpty { null } }
             val s = logger.startSession(radio.info, source(), _activeProfileId.value)
             windowStart = clock.wallMs(); lastWindowWrite = 0
-            store.insertWindow(LoggingWindow(windowStart!!, clock.wallMs(), null))
+            store.insertWindow(LoggingWindow(windowStart!!, clock.wallMs(), null, radio.info.myNodeNum))
             event("Radio ready (${radio.info.preset ?: "preset unknown"}); logging session ${s.id.take(6)} started" +
                 if (source() == Source.SIMULATED) " — SIMULATED DATA" else "")
         } else if (state != RadioState.READY && wasReady) {
             logger.radioReady = false
-            windowStart?.let { store.insertWindow(LoggingWindow(it, clock.wallMs(), null)) }
+            windowStart?.let { store.insertWindow(LoggingWindow(it, clock.wallMs(), null, radio.info.myNodeNum)) }
             windowStart = null
             logger.endSession(if (state == RadioState.DISCONNECTED) SessionStatus.ENDED else SessionStatus.INTERRUPTED)
             event("Radio ${state.name.lowercase()}: $detail; logging session closed")

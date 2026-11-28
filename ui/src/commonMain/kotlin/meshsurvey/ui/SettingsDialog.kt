@@ -83,7 +83,7 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                         OutlinedTextField(manualAcc, { manualAcc = it }, label = { Text("± m (optional)") }, singleLine = true, modifier = Modifier.width(130.dp))
                     }
                 }
-                if (model.gpsOption?.id == RADIO_GPS_ID) engine.radioGps.heldPosition()?.let { h ->
+                if (model.gpsOption?.id == RADIO_GPS_ID) (model.radioGpsEngine ?: engine).radioGps.heldPosition()?.let { h ->
                     OutlinedButton(onClick = {
                         manualLat = fmt(h.lat, 6); manualLon = fmt(h.lon, 6)
                         platform.gpsOptions().firstOrNull { it.needsManual }?.let { g -> model.startGps(g, Triple(h.lat, h.lon, null)) }

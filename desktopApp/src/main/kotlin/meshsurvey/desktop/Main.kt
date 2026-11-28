@@ -8,6 +8,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import meshsurvey.core.engine.Edition
 import meshsurvey.core.engine.SurveyEngine
+import meshsurvey.core.engine.Station
 import meshsurvey.core.preset.FileBackupStore
 import meshsurvey.core.store.JdbcSqlDriver
 import meshsurvey.core.store.SqlStore
@@ -36,17 +37,17 @@ fun main(args: Array<String>) {
 
 private fun runApp(home: File) {
     val store = SqlStore(JdbcSqlDriver("jdbc:sqlite:" + File(home, "meshsurvey.db").absolutePath))
-    val engine = SurveyEngine(store, JvmClock(), Edition.LITE, APP_VERSION,
-        configBackups = FileBackupStore(File(home, "preset-backups")))
+    val station = Station(store, JvmClock(), Edition.LITE, APP_VERSION, configBackups = FileBackupStore(File(home, "preset-backups")))
+    val engine = station.primary
     val platform = DesktopPlatform(home, engine)
 
     application {
         val windowState = rememberWindowState(size = DpSize(1200.dp, 820.dp))
-        Window(onCloseRequest = { engine.disconnect(); platform.stopGps(); exitApplication() },
+        Window(onCloseRequest = { station.receivers.value.forEach { it.disconnect() }; platform.stopGps(); exitApplication() },
             title = "MeshSurvey Lite — Meshtastic RF survey", state = windowState) {
             // No unattended transmission: a minimised window stops any automated test session.
-            LaunchedEffect(windowState.isMinimized) { if (windowState.isMinimized) engine.onAppBackground() }
-            MeshSurveyApp(engine, platform, runTickLoop = true)
+            LaunchedEffect(windowState.isMinimized) { if (windowState.isMinimized) station.onAppBackground() }
+            MeshSurveyApp(station, platform, runTickLoop = true)
         }
     }
 }

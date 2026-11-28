@@ -134,3 +134,17 @@ Data path: files first (export/import), live sync later.
   alternatives, inspection and caveats. Rules documented in HEALTH_RULES.md.
 * Tests: `AnalysisTest` (11) + session import checks. Core suite 114/114.
 * Not yet: UI for any of this (next step), HTML report, themes.
+
+## Unreleased: several radios at once + radio GPS accuracy, 2026-11-27
+User reports recorded: T-Beam Supreme (!33601b74, ESP32-S3, firmware 2.7.15) on Windows over **USB** and **Bluetooth**
+(PIN from its screen): connects, logs, radio GPS used (accuracy unknown). See COMPATIBILITY.md.
+* **Multiple radios**: `Station` holds one `SurveyEngine` per connected radio; each logs as its own receiver (own
+  sessions, logging windows, preset, equipment profile), so radios on different presets survey side by side.
+  The station position (GPS / Windows location / fixed / one radio's GPS) applies to all. Only the first engine does
+  crash recovery, backup reconciliation and suspension records. Schema v6: logging windows per receiver.
+  UI: "Connect another", one chip per radio in the top bar (tap to view it), per-radio Disconnect, receiver filter on the map;
+  the same connection cannot be opened twice.
+* **Radio GPS accuracy**: the precise position comes from the radio's stored copy; the accuracy is estimated from the PDOP
+  and satellite count in the radio's latest position broadcast (default firmware flags send PDOP, not HDOP), used for up to 1 h.
+* Tests: `StationTest` (3), new radio GPS accuracy test. Core suite 119/119.
+* Not yet: a live two-radio comparison view (the engine exists: PairCompare/EquipmentCompare; the screen comes next).

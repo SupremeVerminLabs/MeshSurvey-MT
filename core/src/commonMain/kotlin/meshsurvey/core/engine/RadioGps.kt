@@ -47,6 +47,10 @@ class RadioGpsSource(private val clock: Clock) {
     private var held: PositionInfo? = null
     private var heldAccuracy: Double? = null
     private var heldReceivedWallMs: Long? = null
+    // GPS quality from the radio's own broadcasts (their position may be blurred, but DOP and satellites are not)
+    private var lastDopX100: Int? = null
+    private var lastSats: Int? = null
+    private var lastQualityWallMs: Long? = null
     private var lastReport: PositionInfo? = null
     private var lastReportWallMs: Long? = null
     private var moving = false
@@ -63,12 +67,20 @@ class RadioGpsSource(private val clock: Clock) {
     /** Forget everything about the previous radio (call on connect/disconnect). */
     fun reset() { held = null; heldAccuracy = null; heldReceivedWallMs = null; lastReport = null; lastReportWallMs = null; moving = false; status() }
 
+    /** Accuracy estimate from the DOP in the radio's last broadcast, if within the last hour (null otherwise). */
+    private fun dopAccuracy(): Double? {
+        val t = lastQualityWallMs ?: return null
+        if (clock.wallMs() - t > 3_600_000) return null
+        return hdopErrorM(lastDopX100)
+    }
+
     /** The position currently held, if any (for "use as fixed reference position"). */
     fun heldPosition(): PositionInfo? = held
 
     /** @param fromConfig true for the position in the radio's NodeInfo at connect (may be stored from earlier). */
     fun onReport(p: PositionInfo, fromConfig: Boolean = false) {
         val now = clock.wallMs()
+        if (!fromConfig && (p.hdop != null || p.pdop != null)) { lastDopX100 = p.hdop ?: p.pdop; lastSats = p.satsInView; lastQualityWallMs = now }
         if (fromConfig && p.locationSource != 1) {
             val ageS = p.timeS?.let { now / 1000 - it }
             if (ageS == null || ageS > MAX_STORED_AGE_S) {
@@ -108,7 +120,7 @@ class RadioGpsSource(private val clock: Clock) {
         val h = held ?: return
         // positionTimeMs = when the radio determined this position, so each observation records its real age.
         val posTime = h.timeS?.let { it * 1000 } ?: heldReceivedWallMs
-        onFix?.invoke(Fix(h.lat, h.lon, heldAccuracy, h.altitudeM?.toDouble(), clock.wallMs(), clock.monotonicMs(), FixSource.RADIO, posTime))
+        onFix?.invoke(Fix(h.lat, h.lon, heldAccuracy ?: dopAccuracy(), h.altitudeM?.toDouble(), clock.wallMs(), clock.monotonicMs(), FixSource.RADIO, posTime))
     }
 
     private fun status() {
@@ -122,7 +134,10 @@ class RadioGpsSource(private val clock: Clock) {
                 "The radio needs a GPS fix or a fixed position set in it.")
             else -> {
                 val kind = if (h.locationSource == 1) "radio's configured fixed position" else "radio GPS"
-                val acc = heldAccuracy?.let { " ±${it.roundToInt()} m" } ?: " (accuracy not reported)"
+                val dop = dopAccuracy()
+                val acc = heldAccuracy?.let { " ±${it.roundToInt()} m" }
+                    ?: dop?.let { " ±${it.roundToInt()} m (estimated from the DOP in its last position broadcast" + (lastSats?.let { s -> ", $s satellites" } ?: "") + ")" }
+                    ?: " (accuracy not reported yet; estimated once the radio broadcasts its position)"
                 val posAge = h.timeS?.let { ((clock.wallMs() / 1000 - it) / 60).coerceAtLeast(0) }
                 say("Using $kind$acc, assumed stationary" +
                     (posAge?.let { "; position determined $it min ago" } ?: (age?.let { "; last report $it min ago" } ?: "")))
