@@ -71,6 +71,39 @@ object Formats {
     }
 }
 
+/**
+ * Minimal HTTP for community sharing (both platforms). Google Apps Script web apps answer a POST with a redirect to the
+ * result, which is fetched with GET (the script has already run by then).
+ */
+object Http {
+    fun post(url: String, body: String): String = request(url, "POST", body)
+    fun get(url: String): String = request(url, "GET", null)
+
+    private fun request(start: String, method: String, body: String?): String {
+        var url = start; var m = method; var b = body
+        repeat(5) {
+            val c = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                instanceFollowRedirects = false; connectTimeout = 15_000; readTimeout = 30_000; requestMethod = m
+                setRequestProperty("User-Agent", "MeshSurvey (community sharing)")
+                if (b != null) { doOutput = true; setRequestProperty("Content-Type", "application/json") }
+            }
+            try {
+                if (b != null) c.outputStream.use { it.write(b.encodeToByteArray()) }
+                val code = c.responseCode
+                if (code in 300..399) {
+                    url = c.getHeaderField("Location") ?: throw java.io.IOException("redirect without location")
+                    if (code != 307 && code != 308) { m = "GET"; b = null }
+                    return@repeat
+                }
+                val text = (if (code < 400) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
+                if (code >= 400) throw java.io.IOException("HTTP $code ${text.take(120)}")
+                return text
+            } finally { c.disconnect() }
+        }
+        throw java.io.IOException("too many redirects")
+    }
+}
+
 /** Simulated GPS: posts one simulated fix per second on the UI thread. */
 class SimGps(private val clock: Clock, private val post: (Runnable) -> Unit) {
     private var timer: Timer? = null

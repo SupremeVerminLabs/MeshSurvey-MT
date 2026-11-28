@@ -3,6 +3,17 @@
 Verification status keys: **Implemented** · **Compiled** (by a real compiler; says where) · **Simulator tested** ·
 **Integration tested** · **Hardware tested** (physical radio; says which) · **Unverified**.
 
+## Unreleased: Community sharing (Google Sheet), roomier phone Monitor, 2026-11-27
+
+**Unit tested (145 Kotlin tests + script tests in Node); compiled by CI; not yet run against a real Google Sheet.**
+
+* Opt-in anonymous sharing to a Google Sheet through `tools/community/Code.gs` (Apps Script web app). Rows: ~37 m square ×
+  day × preset × heard-from node with counts, SNR/RSSI medians and machine-readable flags; home privacy zone (250 m, on by
+  default); never simulated/imported/mock data or IDs of the user's own radios. Manual or automatic (30 min) upload with
+  watermark-based retry and duplicate-safe batches; oddity reports; combined squares as a map layer. See docs/COMMUNITY.md.
+* Phone Monitor: start panel closes itself once a radio is logging; tighter status card and chips; more rows visible.
+* Map cell size option 37 m (⅓ acre).
+
 ## Unreleased: GPS accuracy, History tab, tidier Settings, 2026-11-27
 
 **Unit tested (142 local tests), compiled and rendered by CI; not yet checked on hardware.**

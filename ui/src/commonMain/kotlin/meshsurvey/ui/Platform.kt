@@ -62,6 +62,10 @@ interface PlatformServices {
     fun onSurveyActive(active: Boolean) {}
     /** Opens the OS setting that exempts the app from battery optimisation; false if not applicable. */
     fun openBatterySettings(): Boolean = false
+    /** HTTP POST of a JSON body (community sharing). Blocking: call off the UI thread. Returns the response text or throws. */
+    fun httpPost(url: String, body: String): String = throw UnsupportedOperationException("network not available on this platform")
+    /** HTTP GET (community map squares). Blocking: call off the UI thread. */
+    fun httpGet(url: String): String = throw UnsupportedOperationException("network not available on this platform")
     /** The local time zone's offset from UTC at [ms] (for grouping history by calendar day). */
     fun utcOffsetMs(ms: Long): Long = 0
     /** "Sat 27 Nov 2026" in local time. */

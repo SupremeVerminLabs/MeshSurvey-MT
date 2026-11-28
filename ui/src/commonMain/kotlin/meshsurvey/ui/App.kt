@@ -83,6 +83,15 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
     fun forgetPrediction(id: Long) { predictionCache.remove(id) }
 
     private val placesLazy by lazy { platform.loadPlaces() }
+
+    /** Optional community sharing (real data only: uses the station's real database, never the simulation database). */
+    val uploader by lazy { meshsurvey.core.community.Uploader(station.store, station.primary.appVersion) }
+    var communityStatus by mutableStateOf(uploader.lastResult ?: "")
+    fun localDay(ms: Long) = platform.formatDateTime(ms).take(10)
+    fun ownNodes(): Set<Long> = station.receivers.value.mapNotNull { it.radio.info.myNodeNum }.toSet()
+    /** Uploads now; blocking network, so call from a background coroutine. */
+    fun uploadCommunity(): String = uploader.upload(station.clock.wallMs(), ::localDay, ownNodes()) { u, b -> platform.httpPost(u, b) }
+        .also { m -> communityStatus = m; engine.event("Community: $m") }
     /** Offline place names, loaded once on first use (call off the UI thread). */
     fun places(): meshsurvey.core.history.Places? = placesLazy
     /** The start panel stays open until a radio is connected and the user picked what to do. */
@@ -144,6 +153,13 @@ fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boo
         }
     }
     LaunchedEffect(Unit) { if (model.gpsOption == null) platform.defaultGps()?.let { model.startGps(it) } }
+    // Auto-upload (only when the user turned sharing and auto-upload on): every 30 min, off the UI thread.
+    if (runTickLoop) LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            if (model.uploader.autoDue(station.clock.wallMs())) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { model.uploadCommunity() }
+        }
+    }
     // No position source chosen (typical for a Windows base station) and the radio knows where it is:
     // use the radio's own position automatically. Android keeps the phone GPS, which suits driving.
 
@@ -224,8 +240,9 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
 
 @Composable
 fun Chip(text: String, color: Color) {
-    Text(text, color = Color.White, fontSize = 12.sp, maxLines = 1,
-        modifier = Modifier.background(color, RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 2.dp))
+    val c = LocalCompact.current
+    Text(text, color = Color.White, fontSize = if (c) 11.sp else 12.sp, maxLines = 1,
+        modifier = Modifier.background(color, RoundedCornerShape(10.dp)).padding(horizontal = if (c) 6.dp else 8.dp, vertical = 2.dp))
 }
 
 fun radioLabel(s: RadioState) = when (s) {
@@ -292,6 +309,9 @@ fun StartPanel(model: UiModel, onChoose: (Tab, meshsurvey.core.model.TestRole?) 
     val fix by engine.fix.collectAsState()
     var connectOpen by remember { mutableStateOf(false) }
     val ready = radio.state == RadioState.READY
+    // On a phone the panel gets out of the way once a radio is logging ("Start" in the top bar brings it back).
+    val compactNow = LocalCompact.current
+    LaunchedEffect(ready, compactNow) { if (ready && compactNow) model.startOpen = false }
     androidx.compose.material3.Card(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

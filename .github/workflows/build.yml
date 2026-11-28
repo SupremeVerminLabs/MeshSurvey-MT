@@ -22,6 +22,8 @@ jobs:
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
+      - name: Community sheet script tests (Node, in-memory stand-in for Google Sheets)
+        run: node tools/community/test.js
       - name: Core tests (real SQLite via sqlite-jdbc; includes the process-kill durability test)
         run: bash ./gradlew :core:desktopTest --stacktrace
       - uses: actions/upload-artifact@v4

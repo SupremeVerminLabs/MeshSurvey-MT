@@ -171,6 +171,8 @@ class AndroidPlatform(private val app: Context, private val engine: SurveyEngine
     override fun formatTime(ms: Long) = Formats.time(ms)
     override fun formatDateTime(ms: Long) = Formats.dateTime(ms)
     override fun formatDay(ms: Long) = Formats.day(ms)
+    override fun httpPost(url: String, body: String) = meshsurvey.ui.Http.post(url, body)
+    override fun httpGet(url: String) = meshsurvey.ui.Http.get(url)
     override fun utcOffsetMs(ms: Long) = Formats.utcOffsetMs(ms)
     override fun loadPlaces() = runCatching { Formats.places(app.assets.open("places/places.tsv.gz")) }.getOrNull()
 

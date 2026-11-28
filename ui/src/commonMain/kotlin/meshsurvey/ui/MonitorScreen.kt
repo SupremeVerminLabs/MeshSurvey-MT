@@ -60,17 +60,21 @@ fun MonitorScreen(model: UiModel) {
     } else recent.map { engine to it }
     val info = radio.info
 
-    Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val tight = LocalCompact.current
+    Column(Modifier.fillMaxSize().padding(if (tight) 4.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(if (tight) 2.dp else 6.dp)) {
+        val compactCard = LocalCompact.current
         Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(10.dp)) {
+            Column(Modifier.padding(horizontal = 10.dp, vertical = if (compactCard) 4.dp else 10.dp)) {
                 // Always shown: one status line and one summary line. Everything else behind "Details".
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${radioLabel(radio.state)} · ${radio.detail}", fontWeight = FontWeight.Bold, maxLines = 2, modifier = Modifier.weight(1f))
+                    Text("${radioLabel(radio.state)} · ${radio.detail}", fontWeight = FontWeight.Bold, maxLines = if (compactCard) 1 else 2,
+                        fontSize = if (compactCard) 13.sp else 15.sp, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     TextButton(onClick = { details = !details }) { Text(if (details) "Less" else "Details") }
                 }
                 val m0 by engine.radioMetrics.collectAsState()
                 Text(listOfNotNull(info.preset, info.myNodeNum?.let { MeshEnums.nodeId(it) }, "logged ${stats.logged}",
-                    "with position ${stats.withPosition}", m0?.batteryText?.let { "power $it" }).joinToString(" · "), fontSize = 13.sp)
+                    "with position ${stats.withPosition}", m0?.batteryText?.let { "power $it" }).joinToString(" · "), fontSize = if (compactCard) 11.sp else 13.sp,
+                    maxLines = if (compactCard && !details) 1 else 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 if (details) {
                 val fq = remember(info) { FrequencyCalc.from(info) }
                 val m by engine.radioMetrics.collectAsState()

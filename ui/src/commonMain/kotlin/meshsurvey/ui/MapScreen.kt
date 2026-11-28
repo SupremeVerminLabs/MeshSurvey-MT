@@ -100,6 +100,8 @@ data class MapFilter(
     val showBands: Boolean = true,
     /** Allowance (dB) on each side of the predicted range before a cell counts as stronger/weaker. */
     val toleranceDb: Double = 6.0,
+    /** Layer: combined community squares from the shared sheet (needs Settings → Community address). */
+    val showCommunity: Boolean = false,
     /** Absolute time window (History tab: one day); overrides [range] when set. */
     val window: LongRange? = null,
 )
@@ -152,6 +154,19 @@ fun MapScreen(model: UiModel) {
     val textMeasurer = rememberTextMeasurer()
     var pickNodes by remember { mutableStateOf(false) }
     var predDialog by remember { mutableStateOf(false) }
+    // Community squares: fetched off the UI thread for the area around the map centre, refreshed when the map moves far.
+    var community by remember { mutableStateOf<List<meshsurvey.core.community.Community.CommunityCell>>(emptyList()) }
+    val cLat = kotlin.math.round(Mercator.lat(model.map.cy) * 10) / 10; val cLon = kotlin.math.round(Mercator.lon(model.map.cx) * 10) / 10
+    LaunchedEffect(f.showCommunity, cLat, cLon) {
+        val ep = model.uploader.settings.endpoint
+        if (!f.showCommunity || ep.isBlank()) { community = emptyList(); return@LaunchedEffect }
+        community = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            runCatching {
+                meshsurvey.core.community.Community.parseAggregate(model.platform.httpGet(
+                    "$ep?action=aggregate&lat0=${cLat - 0.3}&lat1=${cLat + 0.3}&lon0=${cLon - 0.4}&lon1=${cLon + 0.4}"))
+            }.onFailure { model.engine.event("Community squares could not be loaded: ${it.message}") }.getOrDefault(emptyList())
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         FilterBar(model, data?.presets ?: emptyList(), { predDialog = true }) { pickNodes = true }
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -209,6 +224,14 @@ fun MapScreen(model: UiModel) {
                         val sz = Size((br.x - tl.x).coerceAtLeast(2f), (br.y - tl.y).coerceAtLeast(2f))
                         drawRect(col.copy(alpha = 0.45f), tl, sz)
                         if (c.direct > 0 && sz.width > 10) drawRect(Color(0xFF0B3D0B), tl, sz, style = Stroke(2f))
+                    }
+                    if (f.showCommunity) for (c in community) {
+                        val p = proj.toOffset(c.lat, c.lon)
+                        if (p.x < -20 || p.y < -20 || p.x > size.width + 20 || p.y > size.height + 20) continue
+                        val half = ((meshsurvey.core.community.Community.CELL_M / 2) / proj.metersPerPx(c.lat)).toFloat().coerceAtLeast(2.5f)
+                        val col = c.snrMedian?.let { argb(Scales.snr(it)) } ?: Color.Gray
+                        drawRect(col.copy(alpha = 0.55f), Offset(p.x - half, p.y - half), Size(2 * half, 2 * half))
+                        if (c.flagged) drawRect(Color(0xFFFF6F00), Offset(p.x - half, p.y - half), Size(2 * half, 2 * half), style = Stroke(1.5f))
                     }
                     if (f.showTrack && d.track.size > 1) {
                         val path = Path()
@@ -377,13 +400,14 @@ private fun FilterBar(model: UiModel, presets: List<String>, onPrediction: () ->
             Triple("Tests", f.showTests) { set(model.mapFilter.copy(showTests = !model.mapFilter.showTests)) },
             Triple("GPS accuracy", f.showAccuracy) { set(model.mapFilter.copy(showAccuracy = !model.mapFilter.showAccuracy)) },
             Triple("Prediction bands", f.showBands) { set(model.mapFilter.copy(showBands = !model.mapFilter.showBands)) },
+            Triple("Community squares", f.showCommunity) { set(model.mapFilter.copy(showCommunity = !model.mapFilter.showCommunity)) },
         ))
         val active = listOfNotNull(f.protocol, f.preset, f.minSnr, f.maxAccuracyM, f.receiverNode, f.onlyMyDevices.takeIf { it },
             f.range.takeIf { it != TimeRange.ALL }).size
         OutlinedButton(onClick = { filters = true }) { Text("Filters" + if (active > 0) " ($active)" else "", fontSize = 13.sp) }
         OutlinedButton(onClick = onPickNodes) { Text(f.heardGroups?.let { "Nodes: ${it.size}" } ?: "Nodes: all", fontSize = 13.sp) }
         OutlinedButton(onClick = onPrediction) { Text(if (f.predictionId != null) "Prediction ✓" else "Prediction…", fontSize = 13.sp) }
-        Menu("Cell ${f.cellM} m", listOf(100, 250, 500, 1000, 2000).map { "$it m" to { set(f.copy(cellM = it)) } })
+        Menu("Cell ${f.cellM} m", listOf(37, 100, 250, 500, 1000, 2000).map { (if (it == 37) "37 m (⅓ acre)" else "$it m") to { set(f.copy(cellM = it)) } })
     }
     if (filters) AlertDialog(onDismissRequest = { filters = false },
         confirmButton = { TextButton(onClick = { filters = false }) { Text("Done") } },
@@ -461,6 +485,7 @@ private fun Legend(f: MapFilter, d: MapData?, modifier: Modifier) {
             groups.forEach { g -> LegendRow(argb(Heard.color(g)), Heard.label(g, d.known) + " · ${d.heardCounts[g] ?: 0}") }
             if ((f.heardGroups?.size ?: d.heardCounts.size) > 8) Text("…", fontSize = 10.sp)
         }
+        if (f.showCommunity) Text("Community squares: shared median SNR (same colours); orange outline = flagged", fontSize = 10.sp, color = Pal.muted)
         if (f.showKnown) Text("▲ repeater  ■ other node, at its advertised position (grey = not heard directly yet)", fontSize = 10.sp, color = Pal.muted)
         if (!f.showGrid) return@Column
         if (d?.cmp != null && f.compare) {
