@@ -503,7 +503,7 @@ private fun PredictionCard(model: UiModel, d: MapData, modifier: Modifier) {
             TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Show") }
         }
         if (!open) return@Column
-        val p = d.pred
+        val p = d.pred ?: return@Column
         Text("Bands ${p.levels.firstOrNull()?.toInt()} to ${p.levels.lastOrNull()?.toInt()} dBm, ${fmt(p.stepDb, 1)} dB apart · predicted received signal for one transmitter",
             fontSize = 11.sp, color = Color.DarkGray)
         val t = d.predTarget
