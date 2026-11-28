@@ -21,6 +21,10 @@ Recorded 2026-11-28 from the user's decisions. Part of the "test suite" directio
      change**, so a node someone forgot to switch off sends almost nothing. The user's min/max settings apply only to the
      moving / new-square case.
    * Entering a new square resets to an immediate ping.
+   * **"Stationary" for a mobile node** = it has slowed to a stop or stopped moving (not just "in a tested square").
+5. **Fixed / stationary beacon node** (a node set as a fixed position): **never faster than 60 s**, and a beacon session runs
+   for **at most 1 hour**, then stops on its own. Idea to confirm: the session can be **restarted by a DM** from the survey
+   node (only from a node the user has approved; still subject to the airtime cap and RX-only lockout).
 
 ## Also agreed in discussion
 * Two-way results from one ping (forward delivery via ACK or the other end's log; return-link SNR/RSSI from the ACK).
