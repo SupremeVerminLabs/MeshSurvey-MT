@@ -59,7 +59,10 @@ USB serial, TCP, Android BLE, simulator, all safeguards. No defaults changed (Bl
 
 ### Tests that actually ran
 * Core + protocol tests locally (kotlinc 2.0.21, Linux): **84/84 pass** (77 before + 7 new).
-* **Not compiled yet:** the C++ helper, `WindowsBle.kt`, the Connect/SelfTest/DesktopPlatform changes. These are compiled for the first time on GitHub Actions after the push.
+* GitHub Actions run 46087213884 (commit after b84f256): **all jobs green**. The C++ helper compiled (first attempt failed: needed C++20,
+  fixed), the desktop and Android apps compiled, the MSI was built, and the installed app's self-test passed on Windows Server 2025, including
+  `ble_helper: helper runs; adapter none` (the runner has no Bluetooth adapter). Helper size 426 KB.
+* **Not yet tested:** Windows Bluetooth with a real adapter and radio; the Android sync fix on the T-Echo.
 
 ### Unverified
 U-60 … U-64 (see UNVERIFIED.md); checks HV-60 … HV-63 added to HARDWARE_VALIDATION.md.
