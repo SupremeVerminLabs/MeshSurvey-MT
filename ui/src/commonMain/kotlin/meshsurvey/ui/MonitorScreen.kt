@@ -44,6 +44,13 @@ fun MonitorScreen(model: UiModel) {
     val nodes by engine.nodes.collectAsState()
     val events by engine.events.collectAsState()
     var showEvents by remember { mutableStateOf(false) }
+    val receivers by model.station.receivers.collectAsState()
+    var allRadios by remember { mutableStateOf(true) }
+    // With several radios, show every radio's receptions merged (newest first), each row tagged with radio and preset.
+    val merged = if (receivers.size > 1 && allRadios) {
+        val lists = receivers.map { e -> e to e.recent.collectAsState().value }
+        lists.flatMap { (e, l) -> l.map { e to it } }.sortedByDescending { it.second.rxMs }.take(300)
+    } else recent.map { engine to it }
     val info = radio.info
 
     Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -70,22 +77,27 @@ fun MonitorScreen(model: UiModel) {
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Live receptions (${recent.size})", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text("Live receptions (${merged.size})", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            if (receivers.size > 1) TextButton(onClick = { allRadios = !allRadios }) {
+                Text(if (allRadios) "Show only ${engine.radioLabel()}" else "Show all radios")
+            }
             TextButton(onClick = { showEvents = !showEvents }) { Text(if (showEvents) "Show packets" else "Show event log (${events.size})") }
         }
         if (showEvents) {
             LazyColumn(Modifier.weight(1f)) { items(events) { Text(it, fontSize = 12.sp, fontFamily = FontFamily.Monospace) } }
         } else {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                listOf("time" to 72, "from" to 120, "type" to 104, "RSSI" to 48, "SNR" to 52, "hops" to 44, "relay" to 46, "pos" to 34).forEach { (h, w) ->
+                listOf("time" to 72, "radio" to 70, "preset" to 100, "from" to 120, "type" to 104, "RSSI" to 48, "SNR" to 52, "hops" to 44, "relay" to 46, "pos" to 34).forEach { (h, w) ->
                     Text(h, fontSize = 11.sp, color = Color.Gray, modifier = Modifier.width(w.dp))
                 }
             }
             LazyColumn(Modifier.weight(1f)) {
-                items(recent) { o ->
+                items(merged) { (rxEngine, o) ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                        val name = nodes[o.fromNode]?.shortName ?: MeshEnums.nodeId(o.fromNode)
+                        val name = nodes[o.fromNode]?.shortName ?: rxEngine.nodes.value[o.fromNode]?.shortName ?: MeshEnums.nodeId(o.fromNode)
                         Cell(model.platform.formatTime(o.rxMs), 72)
+                        Cell(rxEngine.radioLabel(), 70)
+                        Cell(o.preset ?: "?", 100)
                         Cell(name, 120)
                         Cell(o.type.name.lowercase() + if (o.status == RxStatus.QUEUED_LATE) " (late)" else "", 104)
                         Cell(o.rssi?.toString() ?: "?", 48)
