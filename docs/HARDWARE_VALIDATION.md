@@ -99,7 +99,8 @@ USB GPS receiver with NMEA output.
 ## Results table
 | ID | Date | Firmware | Hardware | Transport/OS | Result (pass/fail/n.a.) | Evidence link | Notes |
 |---|---|---|---|---|---|---|---|
-| | | | | | | | |
+| HV-10 (partial) | 2026-11-27 | not recorded | LilyGO T-Echo | USB / Windows | pass (connect + packets logged) | user report | RSSI/SNR not yet compared with the official app |
+| HV-64 (partial) | 2026-11-27 | not recorded | LilyGO T-Echo (built-in GPS) | USB / Windows | pass (radio GPS used as position) | user report | build before the full-precision NodeInfo polling; re-test with current build |
 
 **Gate:** HV-01…08, HV-10…16, HV-19, HV-19c, HV-20, HV-30…37 (incl. 36b, 36c), HV-39…44 (incl. 40b, 40c) must pass on at least one ESP32 and one
 nRF52 radio, on Windows and on Android, before Advanced or community features begin.

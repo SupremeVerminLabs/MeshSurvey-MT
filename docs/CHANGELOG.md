@@ -111,3 +111,11 @@ UI compiled only on GitHub Actions: run 46093944819 **all jobs green** (core-tes
 ### Deviations / not yet done
 * Sessions themselves are exported but not yet imported from other devices (needed for multi-device consolidation; step 4).
 * Transmit-power control (spec §7) is not started; only the configured value is read and recorded.
+
+## Unreleased: hardware-first round (T-Beam Supreme prep), 2026-11-27
+* Recorded first user hardware report: T-Echo on Windows over USB logs packets and supplies radio GPS (COMPATIBILITY.md, HARDWARE_VALIDATION.md).
+* ESP32 USB: checked against the official Python client: it opens the port with DTR/RTS asserted on Windows, which is
+  also jSerialComm's default, so no change to port handling. New: if the radio prints boot messages before answering
+  (many ESP32 boards restart when the port opens), the app re-requests its configuration 3 s after the output stops instead
+  of waiting 20 s. Test `radioThatRebootsOnPortOpenIsAskedAgainAfterBootOutput`. Core suite 103/103.
+* Windows signing: user chose to stay unsigned for now (options documented in WINDOWS_BUILD.md).

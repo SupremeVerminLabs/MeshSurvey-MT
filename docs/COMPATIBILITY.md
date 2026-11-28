@@ -1,8 +1,16 @@
 # Hardware and firmware compatibility
 
-**Status: no physical radio has been tested yet.** The matrix below shows what the code targets
-and what each part depends on. Please report results (device, firmware, transport, OS) so this
-table can be filled with measured entries.
+**Status: first user reports received (2026-11-27), see "Verified so far". Everything else is targeted, not verified.**
+Please report results (device, firmware, transport, OS) so the table fills with measured entries.
+
+## Verified so far (user reports, informal; full HV checks still pending)
+| Date | Device | Host / transport | App build | What worked | Not yet checked |
+|---|---|---|---|---|---|
+| 2026-11-27 | LilyGO T-Echo (nRF52), firmware not recorded | Windows, USB | run 46090544108 ("Position sources…") | Connects, receives and logs packets; **radio's own GPS** used as receiver position | Firmware version; full-precision radio GPS (newer build); Bluetooth; RSSI/SNR vs official app (HV-10/11) |
+| 2026-11-25 | not recorded | Windows (earlier build) | — | Connected and showed packets | device/transport not recorded |
+
+Levels used below: **verified** (a user tested it), **expected** (same chip family *and* connection path as a verified device),
+**targeted** (implemented with the official API, untested).
 
 ## Firmware
 | Firmware | Targeted | Why |

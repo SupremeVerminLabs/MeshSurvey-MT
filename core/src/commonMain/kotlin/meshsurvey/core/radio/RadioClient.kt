@@ -87,6 +87,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
     private var configItems = 0
     private var configAttempts = 0
     private var lastWantConfigMs = 0L
+    private var lastBootTextMs: Long? = null
 
     companion object {
         /**
@@ -135,6 +136,14 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         val l = link ?: return
         l.tick()
         val now = clock.monotonicMs()
+        // Radio printed boot messages and went quiet without answering: it restarted after our request. Ask again.
+        val boot = lastBootTextMs
+        if (state == RadioState.DOWNLOADING_CONFIG && configItems == 0 && boot != null && boot > lastWantConfigMs &&
+            now - boot >= 3_000 && configAttempts < 3) {
+            lastBootTextMs = null
+            requestConfig("radio restarted when the port opened; asking again")
+            return
+        }
         // Stalled handshake: nothing arriving for 15 s while waiting for config -> ask again (3 tries).
         if (state == RadioState.DOWNLOADING_CONFIG && now - lastWantConfigMs > 20_000 && now - lastRxMs > 15_000) {
             if (configAttempts >= 3) {
@@ -179,7 +188,12 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         }
     }
 
-    override fun onDebugText(text: String) { listeners.forEach { it.onDebugText(text) } }
+    override fun onDebugText(text: String) {
+        // Console text before any config arrives usually means the radio is booting: many ESP32 boards
+        // restart when a USB port is opened. tick() asks for the config again once the boot output stops.
+        if (state == RadioState.DOWNLOADING_CONFIG && configItems == 0) lastBootTextMs = clock.monotonicMs()
+        listeners.forEach { it.onDebugText(text) }
+    }
 
     override fun onFromRadio(bytes: ByteArray) {
         lastRxMs = clock.monotonicMs()
@@ -259,6 +273,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         val l = link ?: return
         nonce = random.nextLong(1, 0x7fffffffL)
         configItems = 0
+        lastBootTextMs = null
         configAttempts++
         lastWantConfigMs = clock.monotonicMs()
         setState(RadioState.DOWNLOADING_CONFIG, if (configAttempts > 1) "$detail (try $configAttempts of 3)" else detail)

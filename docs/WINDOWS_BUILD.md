@@ -63,3 +63,14 @@ Output: `androidApp\build\outputs\apk\debug\androidApp-debug.apk`. Install it wi
 `.github/workflows/build.yml` runs the core tests and builds the desktop app on `windows-latest`
 and `ubuntu-latest`, plus the Android APK, on every push. Its first green run is the
 "Lite compiles" gate. It has not been run yet.
+
+
+## The "Windows protected your PC" warning (decision 2026-11-27: stay unsigned for now)
+The MSI is not code-signed, so SmartScreen warns on first run ("More info → Run anyway"). Options when that changes:
+* **Microsoft Store**: free individual developer account; the Store installs without a SmartScreen prompt. The app would be
+  repackaged as MSIX (with Bluetooth and location capabilities declared) and submitted for certification.
+* **SignPath Foundation**: free signing for OSI-licensed open-source projects built in CI; publisher shown is "SignPath Foundation".
+* **Azure Artifact Signing** (formerly Trusted Signing): about $9.99/month; individuals in the US and Canada; your verified name as publisher.
+* An OV certificate from a CA: roughly $150–300/year.
+Signing does **not** remove the warning immediately: Microsoft documents that signed files from a new publisher still show
+SmartScreen until they build download reputation. The app will never ask users to disable SmartScreen or Defender.

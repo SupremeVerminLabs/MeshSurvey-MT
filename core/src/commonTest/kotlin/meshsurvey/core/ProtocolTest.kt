@@ -134,6 +134,24 @@ class ProtocolTest {
         override fun close() {}
     }
 
+    @Test fun radioThatRebootsOnPortOpenIsAskedAgainAfterBootOutput() {
+        val clock = ManualClock()
+        val rc = RadioClient(clock)
+        val link = FakeLink()
+        rc.connect(link)
+        assertEquals(1, link.sent.size)
+        val l = link.listener!!
+        clock.advance(500); l.onDebugText("ESP-ROM:esp32s3-20210327")       // board resets as the port opens
+        clock.advance(1500); l.onDebugText("INFO | ?? Booted, wake cause 0")
+        clock.advance(2000); rc.tick()
+        assertEquals(1, link.sent.size)                                     // still printing within 3 s: wait
+        clock.advance(1500); rc.tick()
+        assertEquals(2, link.sent.size)                                     // quiet for 3 s: second want_config
+        val n2 = Wire.parse(link.sent.last()).f(3)!!.u32
+        l.onFromRadio(FromRadioEncoder.myInfo(5)); l.onFromRadio(FromRadioEncoder.configComplete(n2))
+        assertEquals(RadioState.READY, rc.state)
+    }
+
     @Test fun stalledHandshakeIsRetriedThenFails() {
         val clock = ManualClock()
         val rc = RadioClient(clock)
