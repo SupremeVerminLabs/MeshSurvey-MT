@@ -1,4 +1,8 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package meshsurvey.ui
+
+import androidx.compose.foundation.layout.FlowRow
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,7 +68,7 @@ fun TestScreen(model: UiModel) {
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Passive logging is always on. Nothing below transmits until you press a send/start button.", fontSize = 12.sp, color = Pal.muted)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Role:", fontWeight = FontWeight.Bold)
             FilterChip(ab.role == TestRole.A_SURVEY, { engine.ab.setRole(TestRole.A_SURVEY) }, { Text("Device A · survey (sends)") })
             FilterChip(ab.role == TestRole.B_REFERENCE, { engine.ab.setRole(TestRole.B_REFERENCE) }, { Text("Device B · reference (listens)") })
@@ -105,14 +109,14 @@ private fun TargetCard(model: UiModel) {
                     null -> "participation not set"
                 }, color = if (ab.peerConfirmed) Pal.ok else Pal.bad)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedTextField(idText, { idText = it }, label = { Text("B's node ID, e.g. !a1b2c3d4") }, singleLine = true, modifier = Modifier.width(220.dp))
                 Menu("Pick heard node", nodes.values.filter { it.num != engine.radio.info.myNodeNum }.take(40).map { n ->
                     "${n.shortName ?: "?"} ${n.longName ?: ""} ${MeshEnums.nodeId(n.num)}" to { idText = MeshEnums.nodeId(n.num) }
                 })
                 if (remembered.isNotEmpty()) Menu("Remembered", remembered.map { d -> "${d.label} ${MeshEnums.nodeId(d.nodeNum)}" to { idText = MeshEnums.nodeId(d.nodeNum) } })
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 FilterChip(!stockMode, { stockMode = false }, { Text("B runs MeshSurvey") })
                 FilterChip(stockMode, { stockMode = true }, { Text("B is a stock radio I control") })
             }
@@ -125,7 +129,7 @@ private fun TargetCard(model: UiModel) {
                 Checkbox(ownsB, { ownsB = it })
                 Text("I own or control this radio. (ACK mode only; B's firmware acknowledges, so its participation can't be verified.)", fontSize = 12.sp)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Button(enabled = if (stockMode) ownsB else codeText.length == 6, onClick = {
                     val n = MeshEnums.parseNodeId(idText)
                     err = when {
@@ -165,7 +169,7 @@ private fun SurveyRole(model: UiModel, ready: Boolean) {
                 "question, stop when you have enough, and avoid busy presets. With ACK requested the radio may send up to 3 times.",
                 fontSize = 12.sp, color = Pal.warn)
             Text("Tests run on ${radio.info.preset ?: "preset ?"} · ${fq.label}", fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 FilterChip(ab.mode == DeliveryMode.ACKED, { err = engine.ab.setMode(DeliveryMode.ACKED) }, { Text("ACK requested") })
                 FilterChip(ab.mode == DeliveryMode.DIRECT_ONLY, { err = engine.ab.setMode(DeliveryMode.DIRECT_ONLY) }, { Text("Direct only (no relay, no ACK)") })
                 if (ab.mode == DeliveryMode.ACKED) Menu("Hop limit: ${ab.hopLimit ?: "radio default (${radio.info.hopLimit ?: "?"})"}",
@@ -192,7 +196,7 @@ private fun SurveyRole(model: UiModel, ready: Boolean) {
             }
             HorizontalDivider()
             Text("Timed session — finite; stops on its own, on disconnect, when the app is backgrounded, or with STOP", fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedTextField(interval, { interval = it.filter(Char::isDigit) }, label = { Text("Interval s (≥ ${budget?.minIntervalS ?: 30})") },
                     singleLine = true, modifier = Modifier.width(170.dp), enabled = !ab.autoRunning)
                 OutlinedTextField(duration, { duration = it.filter(Char::isDigit) }, label = { Text("Duration min (≤ ${engine.ab.config.maxDurationS / 60})") },
@@ -298,7 +302,7 @@ private fun ReferenceRole(model: UiModel) {
             if (s == null) {
                 Text("Start a session to take part. You'll get a 6-digit code to give to Device A's operator. Only tests with your code are " +
                     "recorded, and only while the session runs. This radio never transmits test traffic.", fontSize = 12.sp, color = Pal.muted)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf(30 to "30 min", 120 to "2 h", 480 to "8 h").forEach { (min, label) ->
                         Button(onClick = { msg = engine.reference.start(min * 60) }) { Text("Start · $label") }
                     }
@@ -309,7 +313,7 @@ private fun ReferenceRole(model: UiModel) {
                 Text("Tell Device A's operator this code and your node ID ${engine.radio.info.myNodeNum?.let { MeshEnums.nodeId(it) } ?: "?"}. " +
                     "Ends in ${ref.remainingS?.let { "${it / 3600}:${((it % 3600) / 60).toString().padStart(2, '0')}" } ?: "?"}. " +
                     "Same preset and channel as Device A required (now ${engine.radio.info.preset ?: "?"}).", fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     OutlinedButton(onClick = { engine.reference.stop() }) { Text("Stop session") }
                     OutlinedButton(onClick = {
                         val text = Bundle.export(engine.store, engine.deviceId, engine.appVersion, engine.clock.wallMs())
@@ -342,7 +346,7 @@ private fun CompareCard(model: UiModel) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Compare with Device B's log (after the survey, no over-the-air reporting)", fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedButton(onClick = {
                     model.platform.openText { text ->
                         if (text == null) return@openText

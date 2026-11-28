@@ -61,7 +61,7 @@ object Screens {
             Shot("phone-map-prediction-dark", 412, 892, 2f, Tab.MAP, ThemeMode.DARK, prediction = true),
             Shot("phone-monitor-dark", 412, 892, 2f, Tab.MONITOR, ThemeMode.DARK),
             Shot("phone-test-dark", 412, 892, 2f, Tab.TEST, ThemeMode.DARK),
-            Shot("phone-start-dark", 412, 892, 2f, Tab.MAP, ThemeMode.DARK, startOpen = true),
+            Shot("phone-setup-dark", 412, 892, 2f, Tab.SETUP, ThemeMode.DARK),
             Shot("phone-monitor-light", 412, 892, 2f, Tab.MONITOR, ThemeMode.LIGHT),
             Shot("desktop-map-dark", 1280, 800, 1f, Tab.MAP, ThemeMode.DARK, heard = true),
             Shot("desktop-map-prediction-light", 1280, 800, 1f, Tab.MAP, ThemeMode.LIGHT, prediction = true),

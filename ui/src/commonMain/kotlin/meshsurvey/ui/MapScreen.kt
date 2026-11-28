@@ -325,12 +325,17 @@ fun MapScreen(model: UiModel) {
                 Button(onClick = { fix?.let { model.map.centerOn(it.lat, it.lon, maxOf(model.map.zoom, 15.0)) } }, zm, contentPadding = zp) { Text("◎", fontSize = 16.sp) }
             }
             val compact = LocalCompact.current
-            var legend by remember(compact, f.predictionId) { mutableStateOf(!compact && f.predictionId == null) }
+            // Legend starts closed; when open it is limited in size and scrolls, so the map stays visible.
+            var legend by remember { mutableStateOf(false) }
             Column(Modifier.align(Alignment.BottomStart).padding(8.dp)) {
-                if (legend) Legend(model, f, data, Modifier.padding(bottom = 4.dp))
-                androidx.compose.material3.FilledTonalButton(onClick = { legend = !legend },
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
-                    Text(if (legend) "Hide legend" else "Legend", fontSize = 12.sp)
+                if (legend) Legend(model, f, data, Modifier.padding(bottom = 4.dp).heightIn(max = if (compact) 260.dp else 420.dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState()))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.FilledTonalButton(onClick = { legend = !legend },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
+                        Text(if (legend) "Hide legend" else "Legend", fontSize = 12.sp)
+                    }
+                    MapStatusPill(model)
                 }
             }
             data?.let { d -> if (d.pred != null) PredictionCard(model, d, Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 60.dp)) }
@@ -482,7 +487,7 @@ fun Menu(label: String, items: List<Pair<String, () -> Unit>>) {
 
 @Composable
 private fun Legend(model: UiModel, f: MapFilter, d: MapData?, modifier: Modifier) {
-    Column(modifier.widthIn(max = 300.dp).background(Pal.overlay, RoundedCornerShape(6.dp)).padding(6.dp)) {
+    Column(modifier.widthIn(max = if (LocalCompact.current) 240.dp else 300.dp).background(Pal.overlay, RoundedCornerShape(6.dp)).padding(6.dp)) {
         if (f.protocol == null && d != null && d.heardCounts.keys.any { it.startsWith("mc:") } && d.heardCounts.keys.any { it.startsWith("mt:") })
             Text("Both protocols shown: coverage only, not a like-for-like comparison", fontSize = 10.sp, color = Pal.warn)
         if (f.showHeard && d != null) {
@@ -725,3 +730,21 @@ fun fmt(v: Double, decimals: Int): String {
     return if (dot < 0) s + "." + "0".repeat(decimals) else s.padEnd(dot + 1 + decimals, '0').take(dot + 1 + decimals)
 }
 
+
+/** The map tab has no top bar: radio and position state as one small pill; tap it for Setup. */
+@Composable
+private fun MapStatusPill(model: UiModel) {
+    val radios = activeReceivers(model)
+    val fix by model.engine.fix.collectAsState()
+    val states = radios.map { it.radioStatus.collectAsState().value.state }
+    val state = when {
+        states.isEmpty() -> meshsurvey.core.radio.RadioState.DISCONNECTED
+        states.all { it == meshsurvey.core.radio.RadioState.READY } -> meshsurvey.core.radio.RadioState.READY
+        states.any { it == meshsurvey.core.radio.RadioState.FAILED } -> meshsurvey.core.radio.RadioState.FAILED
+        else -> meshsurvey.core.radio.RadioState.CONNECTING
+    }
+    val text = (if (radios.size > 1) "${radios.size} radios · " else "") + radioLabel(state) + " · " + gpsLabel(fix, model.engine, model)
+    Text(text, color = Color.White, fontSize = 11.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        modifier = Modifier.widthIn(max = 220.dp).background(radioColor(state), RoundedCornerShape(10.dp))
+            .clickable { model.tabRequest = Tab.SETUP }.padding(horizontal = 8.dp, vertical = 4.dp))
+}

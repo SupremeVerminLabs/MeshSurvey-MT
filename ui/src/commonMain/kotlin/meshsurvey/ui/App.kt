@@ -50,7 +50,7 @@ import meshsurvey.core.model.FixSource
 import meshsurvey.core.model.Source
 import meshsurvey.core.radio.RadioState
 
-enum class Tab(val label: String) { MAP("Map"), MONITOR("Monitor"), HISTORY("History"), TEST("Test") }
+enum class Tab(val label: String) { SETUP("Setup"), MAP("Map"), MONITOR("Monitor"), HISTORY("History"), TEST("Test") }
 
 /** UI-wide state that outlives tab switches. */
 class UiModel(val station: Station, val platform: PlatformServices, scope: CoroutineScope) {
@@ -65,6 +65,8 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
     var gpsStatus by mutableStateOf("GPS off")
     var peerSendsTests by mutableStateOf(false)
     var centeredOnce = false
+    /** Lets a screen switch tabs (e.g. the map's status pill opens Setup). */
+    var tabRequest by mutableStateOf<Tab?>(null)
     /** Dark by default; stored with the app's settings. */
     var theme by mutableStateOf(station.store.getMeta("theme")?.let { t -> ThemeMode.entries.firstOrNull { it.name == t } } ?: ThemeMode.DARK)
     fun updateTheme(t: ThemeMode) { theme = t; station.store.setMeta("theme", t.name) }
@@ -135,12 +137,14 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
  * tick from its Application/foreground service instead so logging survives the activity.
  */
 @Composable
-fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boolean, initialTab: Tab = Tab.MAP,
+fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boolean, initialTab: Tab? = null,
                   initialSettings: Boolean = false, onModel: (UiModel) -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val model = remember { UiModel(station, platform, scope).also(onModel) }
     val engine = model.engine
-    var tab by remember { mutableStateOf(initialTab) }
+    // First screen: Setup until a radio is connected, then the map.
+    var tab by remember { mutableStateOf(initialTab ?: if (station.anyWanted()) Tab.MAP else Tab.SETUP) }
+    LaunchedEffect(model.tabRequest) { model.tabRequest?.let { tab = it; model.tabRequest = null } }
     var showSettings by remember { mutableStateOf(initialSettings) }
 
     // 1 Hz engine tick (heartbeats, test scheduling, ACK timeouts, simulator) on the UI thread.
@@ -189,15 +193,15 @@ fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boo
            // Phone-width layout below 600 dp (Android phones, narrow desktop windows): fewer labels, panels collapsed.
            CompositionLocalProvider(LocalCompact provides (maxWidth < 600.dp)) {
             Column(Modifier.fillMaxSize()) {
-                TopBar(model, onSettings = { showSettings = true }, onStart = { model.startOpen = true })
+                // The map gets the whole screen: its status shows as a small pill on the map instead of the top bar.
+                if (tab != Tab.MAP) TopBar(model, onSettings = { showSettings = true })
                 PresetBanner(model)
-                if (model.startOpen) StartPanel(model) { t, role ->
-                    tab = t
-                    role?.let { engine.ab.setRole(it) }
-                    model.startOpen = false
-                }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (tab) {
+                        Tab.SETUP -> SetupScreen(model, onSettings = { showSettings = true }) { t, role ->
+                            role?.let { engine.ab.setRole(it) }
+                            tab = t
+                        }
                         Tab.MAP -> MapScreen(model)
                         Tab.MONITOR -> MonitorScreen(model)
                         Tab.HISTORY -> HistoryScreen(model)
@@ -221,7 +225,7 @@ fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boo
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) {
+private fun TopBar(model: UiModel, onSettings: () -> Unit) {
     val engine = model.engine
     val radio by engine.radioStatus.collectAsState()
     val fix by engine.fix.collectAsState()
@@ -254,7 +258,6 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
             val tx by engine.appTx.collectAsState()
             if (tx.count > 0) Chip("App sent ${tx.count}", ChipColors.busy)
         }
-        if (!model.startOpen) TextButton(onClick = onStart, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) { Text("Start", color = pal.onBar) }
         TextButton(onClick = onSettings, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) { Text(if (compact) "⚙" else "Settings", color = pal.onBar) }
     }
 }
@@ -316,50 +319,6 @@ fun PresetBanner(model: UiModel) {
         else if (!thisRadio) Text("Connect that radio to restore", fontSize = 12.sp, color = pal.onBanner)
     }
 }
-
-/**
- * Three steps, no reading required: connect a radio, check GPS, choose what to do.
- * "Just listen" is the default: passive logging needs nothing else.
- */
-@Composable
-@OptIn(ExperimentalLayoutApi::class)
-fun StartPanel(model: UiModel, onChoose: (Tab, meshsurvey.core.model.TestRole?) -> Unit) {
-    val engine = model.engine
-    val radio by engine.radioStatus.collectAsState()
-    val wanted by engine.connectionWanted.collectAsState()
-    val fix by engine.fix.collectAsState()
-    var connectOpen by remember { mutableStateOf(false) }
-    val ready = radio.state == RadioState.READY
-    // On a phone the panel gets out of the way once a radio is logging ("Start" in the top bar brings it back).
-    val compactNow = LocalCompact.current
-    LaunchedEffect(ready, compactNow) { if (ready && compactNow) model.startOpen = false }
-    androidx.compose.material3.Card(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("1  Radio", fontWeight = FontWeight.Bold, modifier = Modifier.width(80.dp))
-                if (!wanted) androidx.compose.material3.Button(onClick = { connectOpen = true }) { Text("Connect radio") }
-                else Text(if (ready) "Connected · ${radio.info.preset ?: ""}" else radioLabel(radio.state) + (engine.reconnectInS?.let { " (retry in $it s)" } ?: ""))
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("2  GPS", fontWeight = FontWeight.Bold, modifier = Modifier.width(80.dp))
-                Text(if (fix != null) gpsLabel(fix, engine, model) else model.gpsStatus + " — receptions are logged without position until a fix arrives",
-                    fontSize = 13.sp, modifier = Modifier.weight(1f))
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("3  Do", fontWeight = FontWeight.Bold, modifier = Modifier.width(80.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                androidx.compose.material3.OutlinedButton(enabled = wanted, onClick = { onChoose(Tab.MAP, null) }) { Text("Just listen") }
-                androidx.compose.material3.OutlinedButton(enabled = wanted, onClick = { onChoose(Tab.TEST, meshsurvey.core.model.TestRole.A_SURVEY) }) { Text("Send tests (A)") }
-                androidx.compose.material3.OutlinedButton(enabled = wanted, onClick = { onChoose(Tab.TEST, meshsurvey.core.model.TestRole.B_REFERENCE) }) { Text("Receive tests (B)") }
-                }
-            }
-            Text("Listening never transmits. Tests are short private messages to one radio whose operator takes part.",
-                fontSize = 11.sp, color = Pal.muted)
-        }
-    }
-    if (connectOpen) ConnectDialog(model) { connectOpen = false }
-}
-
 
 /** Short name for a radio in chips and labels: its node id, or its connection while unknown. */
 fun SurveyEngine.radioLabel(): String =
