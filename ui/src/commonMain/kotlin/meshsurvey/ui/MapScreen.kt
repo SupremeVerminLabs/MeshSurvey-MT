@@ -192,7 +192,10 @@ fun MapScreen(model: UiModel) {
                         val tl = proj.toOffset(b.lat1, b.lon0); val br = proj.toOffset(b.lat0, b.lon1)
                         if (br.x < 0 || tl.x > size.width || br.y < 0 || tl.y > size.height) continue
                         val sz = Size((br.x - tl.x).coerceAtLeast(2f), (br.y - tl.y).coerceAtLeast(2f))
-                        drawRect(argb(PredictionCompare.color(c.cls)).copy(alpha = if (c.receptions > 0) 0.55f else 0.35f), tl, sz)
+                        val cc = argb(PredictionCompare.color(c.cls))
+                        // no reception there: drawn as an outline only, because "not heard while passing" is weak evidence
+                        if (c.receptions > 0) drawRect(cc.copy(alpha = 0.6f), tl, sz)
+                        else { drawRect(cc.copy(alpha = 0.12f), tl, sz); drawRect(cc.copy(alpha = 0.8f), tl, sz, style = Stroke(1.5f)) }
                         if (c.nearNoise && sz.width > 10) drawRect(Color.Black, tl, sz, style = Stroke(1f))
                     }
                     else if (f.showGrid) for (c in d.cells.values) {
@@ -288,7 +291,7 @@ fun MapScreen(model: UiModel) {
                 Button(onClick = { fix?.let { model.map.centerOn(it.lat, it.lon, maxOf(model.map.zoom, 15.0)) } }) { Text("◎") }
             }
             val compact = LocalCompact.current
-            var legend by remember(compact) { mutableStateOf(!compact) }
+            var legend by remember(compact, f.predictionId) { mutableStateOf(!compact && f.predictionId == null) }
             Column(Modifier.align(Alignment.BottomStart).padding(8.dp)) {
                 if (legend) Legend(f, data, Modifier.padding(bottom = 4.dp))
                 androidx.compose.material3.FilledTonalButton(onClick = { legend = !legend },
@@ -296,7 +299,7 @@ fun MapScreen(model: UiModel) {
                     Text(if (legend) "Hide legend" else "Legend", fontSize = 12.sp)
                 }
             }
-            data?.let { d -> if (d.pred != null) PredictionCard(model, d, Modifier.align(Alignment.TopStart).padding(8.dp)) }
+            data?.let { d -> if (d.pred != null) PredictionCard(model, d, Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 8.dp, end = 72.dp)) }
             Text(model.tiles.attribution, fontSize = 10.sp, color = Color(0xFF222222), modifier = Modifier.align(Alignment.BottomEnd)
                 .background(Color(0xCCFFFFFF)).padding(horizontal = 4.dp))
         }
@@ -552,13 +555,19 @@ fun transmitterLabel(model: UiModel, t: String, known: List<KnownNode>): String 
 @Composable
 private fun PredictionCard(model: UiModel, d: MapData, modifier: Modifier) {
     val f = model.mapFilter
-    var open by remember { mutableStateOf(true) }
-    Column(modifier.widthIn(max = 420.dp).background(Pal.overlay, RoundedCornerShape(6.dp)).padding(8.dp)) {
+    val compact = LocalCompact.current
+    var open by remember(compact) { mutableStateOf(!compact) }
+    Column(modifier.widthIn(max = 420.dp).heightIn(max = if (compact) 360.dp else 520.dp).background(Pal.overlay, RoundedCornerShape(6.dp))
+        .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Prediction: ${d.pred!!.name}", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f, fill = false))
             TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Show") }
         }
-        if (!open) return@Column
+        if (!open) {
+            d.cmp?.let { c -> Text("Heard in ${c.heardCells} cells · ${c.agrees} agree, ${c.stronger} stronger, ${c.weaker} weaker" +
+                (c.medianResidualDb?.let { r -> " · median ${if (r > 0) "+" else ""}${fmt(r, 1)} dB" } ?: ""), fontSize = 11.sp) }
+            return@Column
+        }
         val p = d.pred ?: return@Column
         Text("Bands ${p.levels.firstOrNull()?.toInt()} to ${p.levels.lastOrNull()?.toInt()} dBm, ${fmt(p.stepDb, 1)} dB apart · predicted received signal for one transmitter",
             fontSize = 11.sp, color = Pal.muted)

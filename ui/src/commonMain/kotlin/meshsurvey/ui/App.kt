@@ -191,7 +191,9 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
         FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (!compact) Text("MeshSurvey ${engine.edition.name.lowercase().replaceFirstChar { it.uppercase() }}", color = pal.onBar,
                 fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.align(Alignment.CenterVertically))
-            val receivers by model.station.receivers.collectAsState()
+            val all by model.station.receivers.collectAsState()
+            // radios in use (connected or reconnecting); the always-present first engine is hidden while it has no radio
+            val receivers = all.filter { it.connectionWanted.collectAsState().value || it.radioStatus.collectAsState().value.state != RadioState.DISCONNECTED }
             val pm1 by engine.radioMetrics.collectAsState()
             if (receivers.size <= 1) Chip(radioLabel(radio.state) + (if (radio.info.protocol == MeshProtocol.MESHCORE) " · MeshCore" else "") + batteryShort(pm1), radioColor(radio.state))
             else receivers.forEach { e ->
@@ -206,7 +208,7 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
             if (simulated) Chip("SIMULATED", ChipColors.alarm)
             val rxOnly by model.station.shared.rxOnly.collectAsState()
             // Always visible: whether this app may transmit. Tap to change (with an explanation in Settings).
-            Text(if (rxOnly) "RX-only" else "TX allowed", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+            Text(if (rxOnly) "RX-only" else if (compact) "TX on" else "TX allowed", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                 modifier = Modifier.background(if (rxOnly) ChipColors.good else ChipColors.busy, RoundedCornerShape(10.dp))
                     .clickable { model.station.setRxOnly(!rxOnly) }.padding(horizontal = 8.dp, vertical = 2.dp))
             val tx by engine.appTx.collectAsState()
