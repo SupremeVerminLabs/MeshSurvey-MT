@@ -97,6 +97,19 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                 Section("Equipment profile (optional)")
                 EquipmentSection(model)
 
+                Section("Transmissions by this app")
+                val rxOnly by model.station.shared.rxOnly.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("RX-only mode", modifier = Modifier.weight(1f))
+                    Switch(rxOnly, { model.station.setRxOnly(it) })
+                }
+                Text("On: this app sends nothing on any connected radio (no tests, no temporary preset changes). " +
+                    "Restoring a radio's original settings stays possible. Radios still transmit by themselves as configured " +
+                    "(node info, telemetry, position, relaying others' packets): that is firmware behaviour, not this app.", fontSize = 11.sp, color = Color.DarkGray)
+                val tx by engine.appTx.collectAsState()
+                Text("This session: ${tx.count} transmission(s) requested by the app on ${engine.radioLabel()}, " +
+                    "estimated ${fmt(tx.estAirtimeMs / 1000, 1)} s airtime (first transmissions only; ACK retries can add up to 2 more each).", fontSize = 12.sp)
+
                 Section("Background logging")
                 Text("While a radio is connected, logging continues with the screen locked (Android shows a notification). " +
                     "Automated test sessions stop when the app leaves the screen.", fontSize = 12.sp)

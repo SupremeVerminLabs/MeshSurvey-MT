@@ -19,11 +19,14 @@
 //                                  (source: 0 cellular, 1 satellite, 2 Wi-Fi, 3 IP address, 4 unknown, 5 default, 6 obfuscated)
 //                                  | "error location <reason>"; "locstatus <n>" on status changes
 //   location-stop               -> "location stopped"
+//   awake on|off                -> "awake on|off": keeps Windows from sleeping while on (SetThreadExecutionState on the
+//                                  command thread, which lives as long as the helper); the screen may still turn off
 //   quit                        -> exits
 // Unsolicited lines: "rx <hex>" (one FromRadio message), "lost" (link dropped),
 //   "log <text>" (diagnostics), "error <where> <reason>".
 // The helper exits when stdin closes, so it never outlives the app.
 
+#include <windows.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Devices.Bluetooth.h>
@@ -399,6 +402,11 @@ int main() {
         else if (cmd == "tx") { std::string h; in >> h; cmdTx(h); }
         else if (cmd == "disconnect") { closeDevice(); emit("disconnected"); }
         else if (cmd == "location") cmdLocation();
+        else if (cmd == "awake") {
+            std::string v; in >> v;
+            SetThreadExecutionState(v == "on" ? (ES_CONTINUOUS | ES_SYSTEM_REQUIRED) : ES_CONTINUOUS);
+            emit(std::string("awake ") + (v == "on" ? "on" : "off"));
+        }
         else if (cmd == "location-stop") { cmdLocationStop(); emit("location stopped"); }
         else if (cmd == "quit") break;
         else if (!cmd.empty()) emit("error unknown command " + cmd);

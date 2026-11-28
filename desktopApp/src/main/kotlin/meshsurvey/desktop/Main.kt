@@ -37,7 +37,8 @@ fun main(args: Array<String>) {
 
 private fun runApp(home: File) {
     val store = SqlStore(JdbcSqlDriver("jdbc:sqlite:" + File(home, "meshsurvey.db").absolutePath))
-    val station = Station(store, JvmClock(), Edition.LITE, APP_VERSION, configBackups = FileBackupStore(File(home, "preset-backups")))
+    val station = Station(store, JvmClock(), Edition.LITE, APP_VERSION, configBackups = FileBackupStore(File(home, "preset-backups")),
+        simStoreFactory = { SqlStore(JdbcSqlDriver("jdbc:sqlite:" + File(home, "simulation.db").absolutePath)) })
     val engine = station.primary
     val platform = DesktopPlatform(home, engine)
 

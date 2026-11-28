@@ -14,6 +14,14 @@ class SharedState(private val store: SqlStore) {
     private val _profiles = MutableStateFlow(store.profiles())
     val profiles: StateFlow<List<EquipmentProfile>> = _profiles
     fun refreshProfiles() { _profiles.value = store.profiles() }
+
+    private val _rxOnly = MutableStateFlow(store.getMeta("rx_only") == "1")
+    /**
+     * RX-only: this app makes no transmissions at all (no tests, no temporary preset changes) on any radio.
+     * Radios still transmit on their own (node info, telemetry, position, relaying) as configured in their firmware.
+     */
+    val rxOnly: StateFlow<Boolean> = _rxOnly
+    fun setRxOnly(on: Boolean) { _rxOnly.value = on; store.setMeta("rx_only", if (on) "1" else "0") }
 }
 
 /**
@@ -28,6 +36,11 @@ class Station(
     val edition: Edition = Edition.LITE,
     val appVersion: String = "0.1.0",
     val configBackups: ConfigBackupStore = MemoryBackupStore(),
+    /**
+     * Opens the separate database used by simulated radios. Simulated data never enters [store], so it cannot be
+     * exported or shared as real measurements. Null = an in-memory-only simulation is not available on this platform.
+     */
+    private val simStoreFactory: (() -> SqlStore)? = null,
 ) {
     val shared = SharedState(store)
     val primary = SurveyEngine(store, clock, edition, appVersion, configBackups = configBackups, primary = true, shared = shared)
@@ -40,6 +53,20 @@ class Station(
         _receivers.value = _receivers.value + e
         return e
     }
+
+    private var simStore: SqlStore? = null
+
+    /** An engine for a simulated radio, writing only to the separate simulation database. */
+    fun addSimulatedReceiver(): SurveyEngine {
+        val f = simStoreFactory ?: throw IllegalStateException("Simulation is not available in this build")
+        val sStore = simStore ?: f().also { simStore = it }
+        val e = SurveyEngine(sStore, clock, edition, appVersion, primary = false, shared = SharedState(sStore))
+        _receivers.value = _receivers.value + e
+        return e
+    }
+
+    /** True for engines writing to the simulation database. */
+    fun isSimulated(e: SurveyEngine) = e.store !== store
 
     /** Disconnects and forgets an additional receiver (the primary engine always stays). */
     fun removeReceiver(e: SurveyEngine) {
@@ -55,6 +82,12 @@ class Station(
     fun onFix(f: Fix) = _receivers.value.forEach { it.onFix(f) }
 
     fun onAppBackground() = _receivers.value.forEach { it.onAppBackground() }
+
+    /** Turns RX-only on/off for every radio; turning it on stops any running automated test session. */
+    fun setRxOnly(on: Boolean) {
+        shared.setRxOnly(on)
+        if (on) _receivers.value.forEach { e -> if (e.ab.state.autoRunning) e.ab.stop("RX-only mode turned on") }
+    }
 
     /** Is any radio connected or reconnecting? (keeps Android's foreground service alive) */
     fun anyWanted(): Boolean = _receivers.value.any { it.connectionWanted.value }

@@ -160,6 +160,7 @@ class PresetManager(
     /** Sends the change described by [plan]. Call only after the user confirmed the plan. Returns an error or null. */
     fun apply(plan: PresetPlan, autoRestore: Boolean): String? {
         if (!plan.canApply) return plan.blockers.first()
+        radio.transmitBlock()?.let { return "$it: temporary preset changes are for active tests" }
         val me = radio.info.myNodeNum ?: return "Local node number unknown"
         // the config must not have changed since the plan was made
         if (!radio.info.loraRaw.contentEqualsNullable(plan.originalRaw)) return "The radio's configuration changed; review the plan again"

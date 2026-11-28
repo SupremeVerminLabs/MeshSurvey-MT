@@ -243,6 +243,7 @@ class AbTestController(
 
     /** Manual single test. Returns an error message or null on success. */
     fun sendSingle(): String? {
+        radio.transmitBlock()?.let { return it }
         val peer = state.peer ?: return "Choose a target device"
         if (state.autoRunning) return "An automated session is running"
         checkCanSend(peer)?.let { publish(state.copy(message = it)); return it }
@@ -258,6 +259,7 @@ class AbTestController(
      */
     fun startAuto(intervalS: Int = config.defaultIntervalS, durationS: Int = config.defaultDurationS): String? {
         val peer = state.peer ?: return "Choose a target device"
+        radio.transmitBlock()?.let { return it }
         if (state.autoRunning) return "Already running"
         if (intervalS < config.minIntervalS) return "Interval must be at least ${config.minIntervalS} s"
         if (durationS <= 0 || durationS > config.maxDurationS) return "Duration must be 1–${config.maxDurationS} s"

@@ -74,3 +74,64 @@ class StationTest {
         assertEquals(meshsurvey.core.model.SessionStatus.ACTIVE, store.sessions().single().status)
     }
 }
+
+class RxOnlyTest {
+    private fun ready(link: Harness.TestLink, node: Long) {
+        val nonce = Wire.parse(link.sent.first()).f(3)!!.u32
+        link.l!!.onFromRadio(FromRadioEncoder.myInfo(node))
+        link.l!!.onFromRadio(FromRadioEncoder.loraConfig(0, 1, 20, 3, true))
+        link.l!!.onFromRadio(FromRadioEncoder.configComplete(nonce))
+    }
+
+    @Test fun rxOnlyBlocksEveryAppTransmissionOnEveryRadioAndIsRemembered() {
+        val clock = ManualClock()
+        val store = SqlStore(testDriver())
+        val st = Station(store, clock)
+        val la = Harness.TestLink(); st.primary.connect(la); ready(la, 0x111)
+        val b = st.addReceiver(); val lb = Harness.TestLink(); b.connect(lb); ready(lb, 0x222)
+        st.primary.ab.setPeer(0x999, confirmed = true)
+        b.ab.setPeer(0x999, confirmed = true)
+        st.setRxOnly(true)
+        val sentBefore = la.sent.size + lb.sent.size
+        assertTrue(st.primary.ab.sendSingle()!!.contains("RX-only"))
+        assertTrue(b.ab.startAuto(60, 600)!!.contains("RX-only"))
+        // even a direct call at the lowest level is refused
+        assertNull(st.primary.radio.sendData(0x999, meshsurvey.core.proto.Port.PRIVATE, byteArrayOf(1), wantAck = true))
+        assertEquals(sentBefore, la.sent.size + lb.sent.size)
+        assertEquals(0, st.primary.radio.appTransmissions)
+        assertTrue(Station(store, clock).shared.rxOnly.value)                    // survives a restart
+    }
+
+    @Test fun turningRxOnlyOnStopsARunningSessionAndCountsWhatWasSent() {
+        val clock = ManualClock()
+        val st = Station(SqlStore(testDriver()), clock)
+        val la = Harness.TestLink(); st.primary.connect(la); ready(la, 0x111)
+        st.primary.ab.setPeer(0x999, confirmed = true)
+        assertNull(st.primary.ab.sendSingle())
+        clock.advance(1000); st.tick()
+        assertEquals(1, st.primary.appTx.value.count); assertTrue(st.primary.appTx.value.estAirtimeMs > 0)
+        clock.advance(200_000)                                                   // respect the minimum spacing after the single test
+        assertNull(st.primary.ab.startAuto(60, 600))
+        assertTrue(st.primary.ab.state.autoRunning)
+        st.setRxOnly(true)
+        assertTrue(!st.primary.ab.state.autoRunning)
+    }
+}
+
+class SimulationIsolationTest {
+    @Test fun simulatedRadioNeverWritesToTheSurveyDatabase() {
+        val clock = ManualClock()
+        val real = SqlStore(testDriver()); val sim = SqlStore(testDriver())
+        val st = Station(real, clock, simStoreFactory = { sim })
+        val world = meshsurvey.core.sim.SimWorld(seed = 3)
+        val loc = meshsurvey.core.sim.SimulatedLocation(world, clock)
+        val e = st.addSimulatedReceiver()
+        assertTrue(st.isSimulated(e)); assertTrue(!st.isSimulated(st.primary))
+        e.connect(meshsurvey.core.sim.SimulatedLink(world, clock, { loc.current().let { it.lat to it.lon } }))
+        repeat(120) { clock.advance(1000); st.onFix(loc.current()); st.tick() }
+        assertTrue(sim.countObservations() > 0)
+        assertEquals(0, real.countObservations())
+        assertTrue(real.sessions().isEmpty())
+        assertTrue(meshsurvey.core.export.Bundle.export(real, "dev", "t", clock.wallMs()).contains("\"contains_simulated\":false"))
+    }
+}

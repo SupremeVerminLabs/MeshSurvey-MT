@@ -149,6 +149,12 @@ private fun SurveyRole(model: UiModel, ready: Boolean) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Device A — controlled tests", fontWeight = FontWeight.Bold)
+            val rxOnly by model.station.shared.rxOnly.collectAsState()
+            if (rxOnly) Text("RX-only mode is on: tests are blocked. Turn it off in Settings (or tap the RX-only chip) to send tests.",
+                fontSize = 12.sp, color = Color(0xFFC62828))
+            Text("Every test is a real transmission on a shared channel that others rely on. Use the longest spacing that answers your " +
+                "question, stop when you have enough, and avoid busy presets. With ACK requested the radio may send up to 3 times.",
+                fontSize = 12.sp, color = Color(0xFF8D6E00))
             Text("Tests run on ${radio.info.preset ?: "preset ?"} · ${fq.label}", fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 FilterChip(ab.mode == DeliveryMode.ACKED, { err = engine.ab.setMode(DeliveryMode.ACKED) }, { Text("ACK requested") })

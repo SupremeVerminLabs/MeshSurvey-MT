@@ -148,3 +148,17 @@ User reports recorded: T-Beam Supreme (!33601b74, ESP32-S3, firmware 2.7.15) on 
   and satellite count in the radio's latest position broadcast (default firmware flags send PDOP, not HDOP), used for up to 1 h.
 * Tests: `StationTest` (3), new radio GPS accuracy test. Core suite 119/119.
 * Not yet: a live two-radio comparison view (the engine exists: PairCompare/EquipmentCompare; the screen comes next).
+
+## Unreleased: base-station essentials, 2026-11-27
+Decisions (user): build base essentials → live two-radio comparison → seamless drive workflow → real-radio test session;
+Google Sheet + Apps Script for optional sharing (opt-in checkboxes, local saves kept, odd readings shared with a tag);
+simulation in its own database; ACK tests kept with a spam warning; base station: keep PC awake only.
+* **RX-only mode** (Settings switch + always-visible top-bar chip, remembered): blocks every app transmission on every radio,
+  enforced in `RadioClient.sendData` (lowest level), A/B controller and preset apply; turning it on stops running test sessions.
+  Restoring a radio's original configuration stays allowed. Firmware's own transmissions are explained as not the app's.
+* **App transmission counter** per radio with estimated airtime (top bar + Settings).
+* **Keep PC awake while logging** (Windows): helper `awake on|off` (SetThreadExecutionState), only while a radio is connected.
+* **Simulation isolated**: simulated radios write to `simulation.db`, never to the survey database; real exports report
+  `contains_simulated: false`.
+* Test screen: spam warning for active tests.
+* Tests: RxOnlyTest (2), SimulationIsolationTest (1). Core suite 122/122.

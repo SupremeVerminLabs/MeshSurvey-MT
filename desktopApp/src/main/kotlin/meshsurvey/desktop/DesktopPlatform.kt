@@ -88,6 +88,20 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
 
     override fun openBatterySettings(): Boolean = false
 
+    /** Keeps Windows from sleeping while any radio is connected (through the helper); normal power settings otherwise. */
+    private var awake: BleHelperProcess? = null
+    override fun onSurveyActive(active: Boolean) {
+        if (active && awake == null) {
+            val cmd = WindowsBle.command() ?: return
+            awake = runCatching { BleHelperProcess(cmd, { line ->
+                if (line == "awake on") post(Runnable { engine.event("Keeping this PC awake while radios are connected") })
+            }, { post(Runnable { if (awake != null) { awake = null; engine.event("Keep-awake helper stopped; the PC may sleep") } }) }) }.getOrNull()
+            awake?.send("awake on")
+        } else if (!active) {
+            awake?.let { h -> awake = null; thread(isDaemon = true) { h.send("awake off"); h.close() }; engine.event("PC may sleep again (no radio connected)") }
+        }
+    }
+
     override fun gpsOptions(): List<GpsOption> {
         val ports = SerialPort.getCommPorts().map { GpsOption("nmea:${it.systemPortName}", "NMEA GPS on ${it.systemPortName}",
             note = "USB GPS receiver (4800–115200 baud auto). Accuracy is taken from \$GxGST when the receiver sends it; otherwise it is recorded as unknown.") }

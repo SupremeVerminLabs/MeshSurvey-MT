@@ -81,7 +81,13 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
                 Button(enabled = o.available && !inUse, onClick = {
                     try {
                         // First radio uses the empty slot; any further radio gets its own engine and becomes the selected one.
-                        val target = if (!engine.connectionWanted.value) engine else model.station.addReceiver()
+                        // Simulated radios always get their own engine on the separate simulation database.
+                        val target = when {
+                            o.kind == LinkKind.SIMULATED -> model.station.addSimulatedReceiver()
+                            !engine.connectionWanted.value && !model.station.isSimulated(engine) -> engine
+                            else -> model.station.receivers.value.firstOrNull { !it.connectionWanted.value && !model.station.isSimulated(it) }
+                                ?: model.station.addReceiver()
+                        }
                         val engine = target
                         val h = if (o.needsPin) pin else host
                         val peer = model.peerSendsTests

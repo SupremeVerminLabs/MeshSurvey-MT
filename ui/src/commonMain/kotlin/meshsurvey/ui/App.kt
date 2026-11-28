@@ -173,6 +173,13 @@ private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) 
         }
         Chip(gpsLabel(fix, engine), if (fix != null) Color(0xFF2E7D32) else Color(0xFF616161))
         if (simulated) Chip("SIMULATED", Color(0xFFB71C1C))
+        val rxOnly by model.station.shared.rxOnly.collectAsState()
+        // Always visible: whether this app may transmit. Tap to change (with an explanation in Settings).
+        Text(if (rxOnly) "RX-only" else "TX allowed", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.background(if (rxOnly) Color(0xFF2E7D32) else Color(0xFFEF6C00), RoundedCornerShape(10.dp))
+                .clickable { model.station.setRxOnly(!rxOnly) }.padding(horizontal = 8.dp, vertical = 2.dp))
+        val tx by engine.appTx.collectAsState()
+        if (tx.count > 0) Chip("App sent ${tx.count}", Color(0xFFEF6C00))
         Box(Modifier.weight(1f))
         if (!model.startOpen) TextButton(onClick = onStart) { Text("Start", color = Color.White) }
         TextButton(onClick = onSettings) { Text("Settings", color = Color.White) }

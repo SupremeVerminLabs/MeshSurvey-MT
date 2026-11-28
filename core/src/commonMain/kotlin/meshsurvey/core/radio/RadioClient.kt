@@ -98,6 +98,15 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         const val NONCE_ONLY_CONFIG = 69420L
     }
 
+    /**
+     * Returns a reason when the app must not transmit (RX-only mode); checked here, at the last step before the radio,
+     * so no screen or feature can bypass it. Local admin messages that *restore* the user's configuration stay allowed.
+     */
+    var transmitBlock: () -> String? = { null }
+
+    /** Transmissions this app asked the radio to make (test packets). Firmware's own traffic is not counted. */
+    var appTransmissions = 0; private set
+
     fun addListener(l: RadioListener) { listeners += l }
 
     /**
@@ -169,8 +178,9 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         if (state != RadioState.READY) return null
         require(to != BROADCAST) { "broadcast sending is not permitted by this app" }
         require(port == Port.PRIVATE) { "only A/B test payloads may be sent" }
+        transmitBlock()?.let { reason -> listeners.forEach { it.onDebugText("transmission refused: $reason") }; return null }
         val id = (random.nextLong(1, 0xffffffffL)) and 0xffffffffL
-        return if (l.send(MeshProto.sendPacket(to, port, payload, id, wantAck, channel, hopLimit))) id else null
+        return if (l.send(MeshProto.sendPacket(to, port, payload, id, wantAck, channel, hopLimit))) { appTransmissions++; id } else null
     }
 
     // ---------------- RadioLink.Listener ----------------

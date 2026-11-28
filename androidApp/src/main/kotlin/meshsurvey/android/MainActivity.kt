@@ -38,7 +38,8 @@ class MeshSurveyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         station = Station(SqlStore(AndroidSqlDriver(this)), JvmClock(), Edition.LITE, BuildConfig.VERSION_NAME,
-            configBackups = FileBackupStore(java.io.File(filesDir, "preset-backups")))
+            configBackups = FileBackupStore(java.io.File(filesDir, "preset-backups")),
+            simStoreFactory = { SqlStore(AndroidSqlDriver(this, "simulation.db")) })
         platform = AndroidPlatform(this, engine)
         scope.launch { while (true) { delay(1000); station.tick() } }
     }

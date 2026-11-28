@@ -75,6 +75,13 @@ class SurveyEngine(
     private val _radioPosition = MutableStateFlow<PositionInfo?>(null)
     /** Latest position the radio reported about itself (null = none yet). */
     val radioPosition: StateFlow<PositionInfo?> = _radioPosition
+
+    /** Transmissions this app requested from this radio since start, and their estimated airtime (first transmission only). */
+    data class AppTx(val count: Int, val estAirtimeMs: Double)
+    private val _appTx = MutableStateFlow(AppTx(0, 0.0))
+    val appTx: StateFlow<AppTx> = _appTx
+    private var appTxAirtime = 0.0
+    private var appTxSeen = 0
     private var lastOwnInfoPollMono = 0L
 
     // ---------------- equipment profiles (optional, user-entered) ----------------
@@ -156,6 +163,7 @@ class SurveyEngine(
     private var lastWindowWrite = 0L
 
     init {
+        radio.transmitBlock = { if (shared.rxOnly.value) "RX-only mode is on" else null }
         radio.addListener(this)
         logger.addObservationListener { o ->
             _recent.value = (listOf(o) + _recent.value).take(300)
@@ -230,6 +238,12 @@ class SurveyEngine(
             try { switchTo(f()) } catch (e: Exception) { scheduleReconnect("reconnect failed: ${e.message}") }
         }
         radio.tick()
+        if (radio.appTransmissions != appTxSeen) {
+            val n = radio.appTransmissions - appTxSeen
+            appTxSeen = radio.appTransmissions
+            appTxAirtime += n * (ab.budget()?.airtimePerTransmissionMs ?: 0.0)
+            _appTx.value = AppTx(appTxSeen, appTxAirtime)
+        }
         // Re-read the radio's own full-precision position once a minute (local phone API only, no RF) while radio GPS is
         // in use, and also while the radio has not reported any position yet, so a GPS that gets its first fix after
         // connecting is picked up within a minute instead of waiting for the radio's next position broadcast.
