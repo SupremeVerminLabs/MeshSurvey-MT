@@ -31,3 +31,8 @@
   windows are imported with origin attribution.
 * Advanced edition (MQTT comparison, preset activity survey, equipment profiles, multi-radio,
   analysis layers) and the community backend are not implemented yet.
+
+* **Radio's own GPS is for stationary receivers.** Radios tell the app their position only at connect and with their own
+  position broadcasts (every 5–60 min with 2.7 defaults, at the channel's position precision). The app holds that position
+  only while the radio isn't moving and refuses positions blurred beyond ~100 m. For a moving Windows PC use Windows
+  location or a USB GPS; Android uses the phone's GPS.

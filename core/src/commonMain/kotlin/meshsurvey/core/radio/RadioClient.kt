@@ -8,6 +8,7 @@ import meshsurvey.core.proto.MeshPacketRx
 import meshsurvey.core.proto.MeshProto
 import meshsurvey.core.proto.NodeRecord
 import meshsurvey.core.proto.Port
+import meshsurvey.core.proto.PositionInfo
 import meshsurvey.core.util.Clock
 import kotlin.random.Random
 
@@ -55,6 +56,11 @@ interface RadioListener {
     fun onDebugText(text: String) {}
     /** FromRadio.queueStatus: res 0 = accepted; free/maxLen = radio TX queue slots; meshPacketId = packet it refers to (0 = none). */
     fun onQueueStatus(res: Int, free: Int, maxLen: Int, meshPacketId: Long) {}
+    /**
+     * The connected radio's own position: from its NodeInfo during the config download, or from its own
+     * position broadcasts (firmware loops locally sent broadcasts back to the phone API).
+     */
+    fun onOwnPosition(pos: PositionInfo, fromConfig: Boolean) {}
 }
 
 /**
@@ -166,7 +172,12 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
         }
         when (msg) {
             is FromRadioMsg.MyInfo -> updateInfo(info.copy(myNodeNum = msg.myNodeNum))
-            is FromRadioMsg.Node -> { nodes[msg.node.num] = msg.node; listeners.forEach { it.onNode(msg.node) } }
+            is FromRadioMsg.Node -> {
+                nodes[msg.node.num] = msg.node; listeners.forEach { it.onNode(msg.node) }
+                if (msg.node.num == info.myNodeNum) msg.raw?.let { raw ->
+                    runCatching { MeshProto.decodeNodeInfoPosition(raw) }.getOrNull()?.let { p -> listeners.forEach { it.onOwnPosition(p, true) } }
+                }
+            }
             is FromRadioMsg.LoraConfig -> updateInfo(applyLora(msg.cfg))
             is FromRadioMsg.Metadata -> updateInfo(applyMeta(msg.meta))
             is FromRadioMsg.Channel -> if (msg.role == 1) updateInfo(info.copy(primaryChannelName = msg.name))
@@ -198,6 +209,7 @@ class RadioClient(private val clock: Clock, private val random: Random = Random.
                     role ?: old?.role, old?.lat, old?.lon, p.rxTime, p.snr, p.hopsAway, p.viaMqtt)
                 nodes[p.from] = n; listeners.forEach { it.onNode(n) }
             } else if (p.portnum == Port.POSITION) {
+                if (p.from == info.myNodeNum) MeshProto.decodePositionInfo(payload)?.let { own -> listeners.forEach { it.onOwnPosition(own, false) } }
                 val pos = MeshProto.decodePosition(payload) ?: return
                 val old = nodes[p.from]
                 val n = NodeRecord(p.from, old?.userId, old?.longName, old?.shortName, old?.hwModel, old?.role,

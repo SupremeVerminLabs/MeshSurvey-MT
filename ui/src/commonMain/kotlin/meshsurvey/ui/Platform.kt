@@ -23,6 +23,13 @@ data class ConnectionOption(
 
 data class GpsOption(val id: String, val label: String, val needsManual: Boolean = false, val note: String? = null)
 
+const val RADIO_GPS_ID = "radio"
+
+/** Available on every platform: the connected radio's own GPS or configured fixed position. */
+val RADIO_GPS_OPTION = GpsOption(RADIO_GPS_ID, "Radio's own GPS (stationary receiver)",
+    note = "Uses the position the radio reports about itself. Radios report it only every few minutes, so this is for a fixed " +
+        "station; while moving use phone GPS, a USB GPS or Windows location. Recorded with source RADIO.")
+
 /** Everything the shared UI needs from Android or desktop. */
 interface PlatformServices {
     val platformName: String

@@ -100,3 +100,18 @@ class HelperBleTest {
         h.close()
     }
 }
+
+class OsLocationTest {
+    @Test fun parsesFreshWifiFixAndRejectsCoarseOrStale() {
+        val now = 1_800_000_000_000L
+        val ok = meshsurvey.core.radio.OsLocation.parse("pos 37.9779 -122.0311 35.0 12.0 ${now - 2000} 2", now, 500_000)
+        assertTrue(ok is meshsurvey.core.radio.OsLocation.Result.Ok, ok.toString())
+        val f = (ok as meshsurvey.core.radio.OsLocation.Result.Ok).fix
+        assertEquals(37.9779, f.lat); assertEquals(35.0, f.accuracyM); assertEquals(null, f.altitudeM)   // altitude only from satellite
+        assertEquals(now - 2000, f.wallMs); assertEquals(498_000L, f.monotonicMs)
+        assertEquals(meshsurvey.core.model.FixSource.OS_LOCATION, f.source)
+        assertTrue(meshsurvey.core.radio.OsLocation.parse("pos 1 2 3000 0 $now 3", now, 0) is meshsurvey.core.radio.OsLocation.Result.Rejected)
+        assertTrue(meshsurvey.core.radio.OsLocation.parse("pos 1 2 5 0 ${now - 60_000} 1", now, 0) is meshsurvey.core.radio.OsLocation.Result.Rejected)
+        assertEquals(null, meshsurvey.core.radio.OsLocation.parse("rx 0a0b", now, 0))
+    }
+}

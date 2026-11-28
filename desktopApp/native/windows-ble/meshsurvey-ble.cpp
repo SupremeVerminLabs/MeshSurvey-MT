@@ -1,4 +1,4 @@
-// meshsurvey-ble: a small Windows Bluetooth LE bridge for MeshSurvey Lite (MIT licence).
+// meshsurvey-ble: a small Windows Bluetooth LE (and location) bridge for MeshSurvey Lite (MIT licence).
 //
 // Java on Windows has no Bluetooth LE API, so the desktop app starts this helper as a child
 // process and talks to it over stdin/stdout, one text line per message. Only the Windows
@@ -15,6 +15,10 @@
 //   connect <address>           -> "connected <mtu>" | "error connect <reason>"
 //   tx <hex>                    -> nothing on success | "error tx <reason>"
 //   disconnect                  -> "disconnected"
+//   location                    -> "location started" then "pos <lat> <lon> <accuracy_m> <altitude_m> <epoch_ms> <source>"...
+//                                  (source: 0 cellular, 1 satellite, 2 Wi-Fi, 3 IP address, 4 unknown, 5 default, 6 obfuscated)
+//                                  | "error location <reason>"; "locstatus <n>" on status changes
+//   location-stop               -> "location stopped"
 //   quit                        -> exits
 // Unsolicited lines: "rx <hex>" (one FromRadio message), "lost" (link dropped),
 //   "log <text>" (diagnostics), "error <where> <reason>".
@@ -26,6 +30,7 @@
 #include <winrt/Windows.Devices.Bluetooth.Advertisement.h>
 #include <winrt/Windows.Devices.Bluetooth.GenericAttributeProfile.h>
 #include <winrt/Windows.Devices.Enumeration.h>
+#include <winrt/Windows.Devices.Geolocation.h>
 #include <winrt/Windows.Devices.Radios.h>
 #include <winrt/Windows.Storage.Streams.h>
 
@@ -49,6 +54,7 @@ using namespace Windows::Devices::Bluetooth;
 using namespace Windows::Devices::Bluetooth::Advertisement;
 using namespace Windows::Devices::Bluetooth::GenericAttributeProfile;
 using namespace Windows::Devices::Enumeration;
+using namespace Windows::Devices::Geolocation;
 using namespace Windows::Storage::Streams;
 
 // Meshtastic BLE service and characteristics (same UUIDs as the Android app's BleLink).
@@ -330,6 +336,47 @@ static void cmdTx(const std::string& hex) {
     requestDrain();   // the radio usually has data for us after a write (e.g. the config download)
 }
 
+// ---------------------------------------------------------------- Windows location service
+static Geolocator geo{ nullptr };
+static event_token geoPosToken{}, geoStatusToken{};
+
+static void cmdLocationStop() {
+    if (geo) {
+        try { geo.PositionChanged(geoPosToken); geo.StatusChanged(geoStatusToken); } catch (...) {}
+        geo = nullptr;
+    }
+    geoPosToken = {}; geoStatusToken = {};
+}
+
+static void cmdLocation() {
+    cmdLocationStop();
+    try {
+        auto access = Geolocator::RequestAccessAsync().get();
+        if (access != GeolocationAccessStatus::Allowed) {
+            emit("error location access denied: turn on Location services and 'Let desktop apps access your location' "
+                 "in Windows Settings > Privacy & security > Location");
+            return;
+        }
+        geo = Geolocator();
+        geo.DesiredAccuracy(PositionAccuracy::High);
+        geo.ReportInterval(1000);
+        geoStatusToken = geo.StatusChanged([](const Geolocator&, const StatusChangedEventArgs& a) {
+            emit("locstatus " + std::to_string((int)a.Status()));
+        });
+        geoPosToken = geo.PositionChanged([](const Geolocator&, const PositionChangedEventArgs& a) {
+            try {
+                auto c = a.Position().Coordinate();
+                auto p = c.Point().Position();
+                long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(winrt::clock::to_sys(c.Timestamp()).time_since_epoch()).count();
+                char buf[200];
+                std::snprintf(buf, sizeof buf, "pos %.7f %.7f %.1f %.1f %lld %d", p.Latitude, p.Longitude, c.Accuracy(), p.Altitude, ms, (int)c.PositionSource());
+                emit(buf);
+            } catch (const hresult_error& e) { emit("error location " + err(e)); }
+        });
+        emit("location started");
+    } catch (const hresult_error& e) { emit("error location " + err(e)); }
+}
+
 int main() {
     init_apartment(apartment_type::multi_threaded);
     std::thread drainer(drainLoop);
@@ -351,10 +398,13 @@ int main() {
         }
         else if (cmd == "tx") { std::string h; in >> h; cmdTx(h); }
         else if (cmd == "disconnect") { closeDevice(); emit("disconnected"); }
+        else if (cmd == "location") cmdLocation();
+        else if (cmd == "location-stop") { cmdLocationStop(); emit("location stopped"); }
         else if (cmd == "quit") break;
         else if (!cmd.empty()) emit("error unknown command " + cmd);
     }
     quitting = true;
+    cmdLocationStop();
     drainCv.notify_all();
     closeDevice();
     drainer.join();

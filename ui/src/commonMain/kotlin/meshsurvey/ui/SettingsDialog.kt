@@ -63,7 +63,7 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
 
                 Section("Receiver position (GPS)")
                 Text(model.gpsStatus, fontSize = 13.sp)
-                platform.gpsOptions().forEach { g ->
+                (listOf(RADIO_GPS_OPTION) + platform.gpsOptions()).forEach { g ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(g.label); g.note?.let { Text(it, fontSize = 11.sp, color = Color.DarkGray) }

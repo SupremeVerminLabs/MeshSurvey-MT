@@ -53,7 +53,8 @@ enum class PacketType {
 }
 
 /** MOCK = Android reported the location as coming from a mock provider; kept but tagged, never trusted silently. */
-enum class FixSource { GPS, NETWORK, NMEA_SERIAL, MANUAL, SIMULATED, MOCK }
+/** RADIO = the connected radio's own position (its GPS or its configured fixed position); OS_LOCATION = the operating system's location service (Windows). */
+enum class FixSource { GPS, NETWORK, NMEA_SERIAL, MANUAL, SIMULATED, MOCK, RADIO, OS_LOCATION }
 
 /** A receiver position fix. */
 data class Fix(

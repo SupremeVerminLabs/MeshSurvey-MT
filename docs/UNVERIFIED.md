@@ -77,3 +77,5 @@ Everything below is not yet verified. Each item names the check that closes it.
 | U-62 | Custom pairing with a PIN (`DeviceInformationCustomPairing`, ProvidePin) works for Meshtastic radios from a desktop (non-packaged) app | HV-61 |
 | U-63 | WinRT GATT: FromNum notifications arrive, FromRadio reads return one message each and empty when drained, ToRadio write-with-response works | HV-62 |
 | U-64 | Android BLE handshake now completes on radios that previously stalled at "Syncing…" (polling + retry fix) | HV-63 (T-Echo), HV-10 (RAK4631) |
+| U-65 | The phone API delivers the radio's own position: in its NodeInfo at connect, and as loop-backs of its own position broadcasts (2.7 `Router::sendLocal` delivers locally sent broadcasts to the phone; 2.8 adds a full-precision copy every 60 s). With 2.7 defaults this is every 5–60 min, at the channel's position precision | HV-64 |
+| U-66 | Windows `Geolocator` works from an unpackaged desktop app when "Let desktop apps access your location" is on; Wi-Fi accuracy is reported honestly | HV-65 |

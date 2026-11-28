@@ -22,6 +22,7 @@ import meshsurvey.core.model.SessionStatus
 import meshsurvey.core.model.Source
 import meshsurvey.core.model.TestRx
 import meshsurvey.core.proto.NodeRecord
+import meshsurvey.core.proto.PositionInfo
 import meshsurvey.core.radio.LinkKind
 import meshsurvey.core.radio.RadioClient
 import meshsurvey.core.radio.RadioInfo
@@ -61,6 +62,11 @@ class SurveyEngine(
     val recoveredOnStart: Int = store.recoverInterrupted(clock.wallMs())
 
     val radio = RadioClient(clock)
+    /** The connected radio's own position as a receiver position source (stationary receivers). */
+    val radioGps = RadioGpsSource(clock)
+    private val _radioPosition = MutableStateFlow<PositionInfo?>(null)
+    /** Latest position the radio reported about itself (null = none yet). */
+    val radioPosition: StateFlow<PositionInfo?> = _radioPosition
     val logger = ReceptionLogger(store, clock, loggerConfig)
     val presets = PresetManager(store, radio, clock, configBackups)
     private val _metrics = MutableStateFlow<RadioMetrics?>(null)
@@ -158,6 +164,7 @@ class SurveyEngine(
 
     private fun switchTo(link: RadioLink?) {
         switching = true
+        radioGps.reset(); _radioPosition.value = null
         try { if (link == null) radio.disconnect() else radio.connect(link) } finally { switching = false }
     }
 
@@ -179,6 +186,7 @@ class SurveyEngine(
             try { switchTo(f()) } catch (e: Exception) { scheduleReconnect("reconnect failed: ${e.message}") }
         }
         radio.tick()
+        radioGps.tick()
         ab.tick()
         reference.tick()
         presets.tick()
@@ -252,6 +260,11 @@ class SurveyEngine(
     override fun onRadioInfo(info: RadioInfo) { _radio.value = _radio.value.copy(info = info) }
 
     override fun onQueueStatus(res: Int, free: Int, maxLen: Int, meshPacketId: Long) = ab.onQueueStatus(res, free, maxLen, meshPacketId)
+
+    override fun onOwnPosition(pos: PositionInfo, fromConfig: Boolean) {
+        _radioPosition.value = pos
+        radioGps.onReport(pos, fromConfig)
+    }
 
     private fun updateMetrics(m: meshsurvey.core.proto.DeviceMetricsInfo) {
         if (m.channelUtilization == null && m.airUtilTx == null) return

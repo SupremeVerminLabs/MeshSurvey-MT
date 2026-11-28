@@ -90,6 +90,12 @@ USB GPS receiver with NMEA output.
 | HV-62 | Windows: status reaches "Logging"; packets appear in Monitor with RSSI/SNR matching the official app within a few dB; switching the radio off shows "link lost" and reconnects when it returns; no test is resumed automatically | Screenshot + export |
 | HV-63 | Android: a radio that previously stalled at "Syncing…" (T-Echo) now shows "N items received" and reaches "Logging", or fails with the 3-try message instead of hanging | Screenshot of the status line |
 
+## H. Position sources (radio GPS, Windows location)
+| ID | Check | Evidence |
+|---|---|---|
+| HV-64 | Windows base, radio with GPS fix (or a fixed position set in the radio), no other position source chosen: the app switches to "Radio's own GPS" by itself and receptions get the radio's position. On a public default channel (reduced precision) it refuses with the "too coarse" message instead | Screenshot of the status line; export showing source RADIO |
+| HV-65 | Windows laptop: "Windows location" gives positions with plausible accuracy while driving; with location turned off for desktop apps, the clear refusal message appears | Screenshot + exported track |
+
 ## Results table
 | ID | Date | Firmware | Hardware | Transport/OS | Result (pass/fail/n.a.) | Evidence link | Notes |
 |---|---|---|---|---|---|---|---|

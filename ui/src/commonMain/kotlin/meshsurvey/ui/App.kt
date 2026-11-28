@@ -55,11 +55,13 @@ class UiModel(val engine: SurveyEngine, val platform: PlatformServices, scope: C
 
     fun startGps(opt: GpsOption, manual: Triple<Double, Double, Double?>? = null) {
         platform.stopGps()
+        engine.radioGps.stop()
         gpsOption = opt
-        platform.startGps(opt, manual, { engine.onFix(it) }, { gpsStatus = it })
+        if (opt.id == RADIO_GPS_ID) engine.radioGps.start({ engine.onFix(it) }, { gpsStatus = it })
+        else platform.startGps(opt, manual, { engine.onFix(it) }, { gpsStatus = it })
     }
 
-    fun stopGps() { platform.stopGps(); gpsOption = null; gpsStatus = "GPS off" }
+    fun stopGps() { platform.stopGps(); engine.radioGps.stop(); gpsOption = null; gpsStatus = "GPS off" }
 }
 
 /**
@@ -81,6 +83,10 @@ fun MeshSurveyApp(engine: SurveyEngine, platform: PlatformServices, runTickLoop:
     val wanted by engine.connectionWanted.collectAsState()
     LaunchedEffect(wanted) { platform.onSurveyActive(wanted) }
     LaunchedEffect(Unit) { if (model.gpsOption == null) platform.defaultGps()?.let { model.startGps(it) } }
+    // No position source chosen (typical for a Windows base station) and the radio knows where it is:
+    // use the radio's own position automatically. Android keeps the phone GPS, which suits driving.
+    val radioPos by engine.radioPosition.collectAsState()
+    LaunchedEffect(radioPos) { if (radioPos != null && model.gpsOption == null) model.startGps(RADIO_GPS_OPTION) }
 
     MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF1B5E7A), secondary = Color(0xFF2E7D32))) {
         Surface(Modifier.fillMaxSize()) {

@@ -57,6 +57,22 @@ class MeshPacketRx(
     }
 }
 
+/** A Position message as reported by a radio. Times in seconds since the epoch; ground speed in m/s. */
+data class PositionInfo(
+    val lat: Double,
+    val lon: Double,
+    val altitudeM: Int?,
+    val timeS: Long?,
+    /** 0 unset, 1 manual (fixed position set by the user), 2 internal GPS, 3 external GPS */
+    val locationSource: Int,
+    /** HDOP x 100, as sent by the firmware */
+    val hdop: Int?,
+    val groundSpeedMps: Int?,
+    val satsInView: Int?,
+    /** 1..32; fewer bits = deliberately blurred position. Absent/0 = not stated. */
+    val precisionBits: Int?,
+)
+
 class NodeRecord(
     val num: Long,
     val userId: String?,
@@ -102,7 +118,7 @@ class RoutingInfo(val errorReason: Int, val isRouteReply: Boolean, val isRouteRe
 
 sealed class FromRadioMsg {
     class MyInfo(val myNodeNum: Long) : FromRadioMsg()
-    class Node(val node: NodeRecord) : FromRadioMsg()
+    class Node(val node: NodeRecord, val raw: ByteArray? = null) : FromRadioMsg()
     class Packet(val packet: MeshPacketRx) : FromRadioMsg()
     class LoraConfig(val cfg: LoraConfigInfo) : FromRadioMsg()
     /** Channel name and role only. The PSK is deliberately not decoded or kept. */
@@ -120,7 +136,7 @@ object MeshProto {
         val f = Wire.parse(b)
         f.f(2)?.bytes?.let { return FromRadioMsg.Packet(decodePacket(it)) }
         f.f(3)?.bytes?.let { return FromRadioMsg.MyInfo(Wire.parse(it).f(1)?.u32 ?: 0) }
-        f.f(4)?.bytes?.let { return FromRadioMsg.Node(decodeNodeInfo(it)) }
+        f.f(4)?.bytes?.let { return FromRadioMsg.Node(decodeNodeInfo(it), it) }
         f.f(5)?.bytes?.let { cfg ->
             val c = Wire.parse(cfg)
             c.f(6)?.bytes?.let { return FromRadioMsg.LoraConfig(decodeLora(it)) }
@@ -174,6 +190,9 @@ object MeshProto {
         )
     }
 
+    /** NodeInfo.position (field 3) with quality fields, if present. */
+    fun decodeNodeInfoPosition(b: ByteArray): PositionInfo? = Wire.parse(b).f(3)?.bytes?.let { decodePositionInfo(it) }
+
     fun decodeNodeInfo(b: ByteArray): NodeRecord {
         val f = Wire.parse(b)
         val u = f.f(2)?.bytes?.let { Wire.parse(it) }
@@ -205,6 +224,27 @@ object MeshProto {
         val la = p.f(1)?.int ?: 0
         val lo = p.f(2)?.int ?: 0
         return if (la == 0 && lo == 0) null else la * 1e-7 to lo * 1e-7
+    }
+
+    /**
+     * Position with the fields needed to judge quality (mesh.proto): latitude_i 1, longitude_i 2,
+     * altitude 3, time 4, location_source 5, HDOP 12, ground_speed 15, sats_in_view 19, precision_bits 23.
+     */
+    fun decodePositionInfo(b: ByteArray): PositionInfo? {
+        val p = Wire.parse(b)
+        val la = p.f(1)?.int ?: 0
+        val lo = p.f(2)?.int ?: 0
+        if (la == 0 && lo == 0) return null
+        return PositionInfo(
+            lat = la * 1e-7, lon = lo * 1e-7,
+            altitudeM = p.f(3)?.int,
+            timeS = p.f(4)?.u32?.takeIf { it > 0 },
+            locationSource = p.f(5)?.int ?: 0,
+            hdop = p.f(12)?.int,
+            groundSpeedMps = p.f(15)?.int,
+            satsInView = p.f(19)?.int,
+            precisionBits = p.f(23)?.int,
+        )
     }
 
     fun decodeUser(b: ByteArray): Triple<String?, String?, Int?> {

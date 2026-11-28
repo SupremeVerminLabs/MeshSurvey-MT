@@ -69,3 +69,17 @@ U-60 … U-64 (see UNVERIFIED.md); checks HV-60 … HV-63 added to HARDWARE_VALI
 
 ### New dependencies
 None at runtime. At build time: MSVC + Windows SDK on the GitHub Windows runner (already present).
+
+## Unreleased: position sources (user request, 2026-11-27)
+* **Radio's own GPS** (Windows and Android): uses the position the connected radio reports about itself (its GPS, or a
+  fixed position set in the radio). Held while the radio is stationary; nothing is asserted while it moves; positions
+  blurred beyond ~100 m (e.g. default public-channel precision) and stored GPS positions more than 2 h old at connect
+  are refused. **Chosen automatically** when no other position source is active (the Windows base-station case);
+  Android keeps the phone GPS by default. New fix source `RADIO`.
+* **Windows location** (desktop, Windows): Windows' location service through the existing helper (satellite if the
+  PC has GPS, else Wi-Fi). IP-address/obfuscated positions and fixes older than 10 s are refused. New fix source `OS_LOCATION`.
+  Lets the Windows app go mobile (secondary use) without extra hardware; a USB NMEA GPS also still works.
+* Firmware basis checked in source: 2.7.26 `Router::sendLocal` loops locally sent broadcasts back to the phone;
+  `Default.h` smart-broadcast minimum 5 min, broadcast default 60 min. Master (2.8) adds `sendOurPositionToPhone` every 60 s.
+* Tests: `RadioGpsTest` (7) and `OsLocationTest` (1). Local core suite **92/92 pass**.
+* Unverified: U-65, U-66; hardware checks HV-64, HV-65.

@@ -186,3 +186,35 @@ class HelperBleLink(
         listener?.onLinkState(LinkState.DISCONNECTED, "closed")
     }
 }
+
+/** Parses the helper's Windows location lines (`pos <lat> <lon> <acc> <alt> <epoch_ms> <source>`). */
+object OsLocation {
+    /** Windows PositionSource: 0 cellular, 1 satellite, 2 Wi-Fi, 3 IP address, 4 unknown, 5 default, 6 obfuscated. */
+    fun sourceLabel(src: Int) = when (src) { 0 -> "cellular"; 1 -> "satellite"; 2 -> "Wi-Fi"; 3 -> "IP address"; 6 -> "obfuscated"; else -> "unknown" }
+
+    sealed class Result {
+        data class Ok(val fix: meshsurvey.core.model.Fix, val sourceLabel: String) : Result()
+        data class Rejected(val reason: String) : Result()
+    }
+
+    /**
+     * IP-address and deliberately obfuscated positions are rejected (kilometres off). The fix keeps Windows' own
+     * timestamp; one older than [maxAgeMs] is rejected so a cached position is never logged as current.
+     */
+    fun parse(line: String, nowWallMs: Long, nowMonoMs: Long, maxAgeMs: Long = 10_000): Result? {
+        val p = line.split(" ")
+        if (p.size < 7 || p[0] != "pos") return null
+        val lat = p[1].toDoubleOrNull() ?: return null
+        val lon = p[2].toDoubleOrNull() ?: return null
+        val acc = p[3].toDoubleOrNull()
+        val alt = p[4].toDoubleOrNull()
+        val ts = p[5].toLongOrNull() ?: return null
+        val src = p[6].toIntOrNull() ?: 4
+        if (src == 3 || src == 6) return Result.Rejected("Windows only has an ${sourceLabel(src)} position (too coarse); not used")
+        val age = nowWallMs - ts
+        if (age > maxAgeMs) return Result.Rejected("Windows position is ${age / 1000} s old; waiting for a fresh one")
+        val ageClamped = age.coerceAtLeast(0)
+        return Result.Ok(meshsurvey.core.model.Fix(lat, lon, acc, if (src == 1) alt else null,
+            nowWallMs - ageClamped, nowMonoMs - ageClamped, meshsurvey.core.model.FixSource.OS_LOCATION), sourceLabel(src))
+    }
+}

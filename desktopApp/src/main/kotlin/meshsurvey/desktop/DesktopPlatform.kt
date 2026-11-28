@@ -8,7 +8,9 @@ import meshsurvey.core.map.MbTiles
 import meshsurvey.core.store.JdbcSqlDriver
 import meshsurvey.core.model.Fix
 import meshsurvey.core.model.FixSource
+import meshsurvey.core.radio.BleHelperProcess
 import meshsurvey.core.radio.BleHelperScan
+import meshsurvey.core.radio.OsLocation
 import meshsurvey.core.radio.BleScanResult
 import meshsurvey.core.radio.HelperBleLink
 import meshsurvey.core.radio.LinkKind
@@ -89,7 +91,10 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
     override fun gpsOptions(): List<GpsOption> {
         val ports = SerialPort.getCommPorts().map { GpsOption("nmea:${it.systemPortName}", "NMEA GPS on ${it.systemPortName}",
             note = "USB GPS receiver (4800–115200 baud auto). Accuracy is taken from \$GxGST when the receiver sends it; otherwise it is recorded as unknown.") }
-        return ports + GpsOption("manual", "Fixed position (stationary receiver)", needsManual = true,
+        val winLoc = if (WindowsBle.command() != null) listOf(GpsOption("winloc", "Windows location (laptop GPS or Wi-Fi)",
+            note = "For using this PC on the move. Uses Windows' location service: satellite if the PC has a GPS, otherwise Wi-Fi " +
+                "(often 20–100 m). IP-address positions are refused. Needs Location turned on for desktop apps in Windows Settings.")) else emptyList()
+        return winLoc + ports + GpsOption("manual", "Fixed position (stationary receiver)", needsManual = true,
             note = "For a fixed site. Recorded with source MANUAL.") +
             GpsOption(SIM_GPS_ID, "Simulated position (development only)")
     }
@@ -109,6 +114,25 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
                 }
                 onStatus("Fixed position ${manual.first}, ${manual.second}")
             }
+            option.id == "winloc" -> {
+                val cmd = WindowsBle.command()
+                if (cmd == null) { onStatus(WindowsBle.unavailableReason()); return }
+                onStatus("Windows location: starting…")
+                winLoc = BleHelperProcess(cmd, { line -> post(Runnable {
+                    when {
+                        line.startsWith("pos ") -> when (val r = OsLocation.parse(line, engine.clock.wallMs(), engine.clock.monotonicMs())) {
+                            is OsLocation.Result.Ok -> {
+                                onFix(r.fix)
+                                onStatus("Windows location (${r.sourceLabel})" + (r.fix.accuracyM?.let { " ±${it.toInt()} m" } ?: ""))
+                            }
+                            is OsLocation.Result.Rejected -> onStatus(r.reason)
+                            null -> {}
+                        }
+                        line.startsWith("error location") -> onStatus("Windows location: " + line.removePrefix("error location").trim())
+                        line == "location started" -> onStatus("Windows location: waiting for a position…")
+                    }
+                }) }, { post(Runnable { if (winLoc != null) onStatus("Windows location stopped unexpectedly") }) }).also { it.send("location") }
+            }
             option.id.startsWith("nmea:") -> {
                 nmea = NmeaGps(option.id.removePrefix("nmea:"), engine, onFix, onStatus).also { it.start() }
             }
@@ -117,7 +141,10 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
 
     private var simGpsManual: java.util.Timer? = null
 
+    private var winLoc: BleHelperProcess? = null
+
     override fun stopGps() {
+        winLoc?.let { h -> winLoc = null; thread(isDaemon = true) { h.send("location-stop"); h.close() } }
         simGps.stop(); nmea?.stop(); nmea = null; simGpsManual?.cancel(); simGpsManual = null
     }
 
