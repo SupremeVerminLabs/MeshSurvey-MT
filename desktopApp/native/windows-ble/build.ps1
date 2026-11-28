@@ -13,7 +13,7 @@ if (-not $vs) { throw 'Visual Studio C++ build tools not found' }
 $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
 Push-Location $here
 try {
-    cmd /c "`"$vcvars`" >nul && cl /nologo /std:c++17 /EHsc /O2 /MT /W3 /permissive- /DNOMINMAX /DWIN32_LEAN_AND_MEAN meshsurvey-ble.cpp /link windowsapp.lib /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /OUT:`"$out`""
+    cmd /c "`"$vcvars`" >nul && cl /nologo /std:c++20 /EHsc /O2 /MT /W3 /permissive- /DNOMINMAX /DWIN32_LEAN_AND_MEAN meshsurvey-ble.cpp /link windowsapp.lib /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /OUT:`"$out`""
     if ($LASTEXITCODE -ne 0) { throw "cl failed with exit code $LASTEXITCODE" }
 } finally { Pop-Location }
 Get-Item $out | Select-Object FullName, Length
