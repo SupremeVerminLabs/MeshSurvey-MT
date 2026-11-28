@@ -136,6 +136,19 @@ class HelperBleLink(
     /** Reported by the helper on connect (which Bluetooth service the radio offers). */
     @Volatile private var proto = MeshProtocol.MESHTASTIC
     override val detectedProtocol: MeshProtocol get() = proto
+    /** When pairing/connecting was requested; the link fails if the helper has not answered within [CONNECT_TIMEOUT_MS]. */
+    private var connectStartedMs: Long? = null
+
+    companion object { const val CONNECT_TIMEOUT_MS = 100_000L }
+
+    override fun tick() {
+        val t = connectStartedMs ?: return
+        if (connected || closed || System.currentTimeMillis() - t < CONNECT_TIMEOUT_MS) return
+        connectStartedMs = null
+        listener?.onLinkState(LinkState.FAILED, "No answer from the radio over Bluetooth. Make sure no phone app is connected to it, " +
+            "and enter its PIN (shown on its screen; 123456 on radios without one).")
+        helper?.let { h -> helper = null; thread(isDaemon = true) { h.close() } }
+    }
 
     override fun start(listener: RadioLink.Listener) {
         this.listener = listener
@@ -154,6 +167,7 @@ class HelperBleLink(
         val h = helper ?: return
         when {
             l.startsWith("ready") -> {
+                connectStartedMs = System.currentTimeMillis()
                 if (!pin.isNullOrBlank()) { ls.onLinkState(LinkState.CONNECTING, "$description: pairing"); h.send("pair $address ${pin.trim()}") }
                 else { ls.onLinkState(LinkState.CONNECTING, "$description: connecting"); h.send("connect $address") }
             }
@@ -163,8 +177,9 @@ class HelperBleLink(
                     "screenless radios such as the RAK4631 use 123456 unless changed.")
             l.startsWith("connected") -> {
                 proto = if (l.split(" ").getOrNull(2) == "meshcore") MeshProtocol.MESHCORE else MeshProtocol.MESHTASTIC
-                connected = true; ls.onLinkState(LinkState.CONNECTED, description)
+                connected = true; connectStartedMs = null; ls.onLinkState(LinkState.CONNECTED, description)
             }
+            l.startsWith("log connect:") -> ls.onLinkState(LinkState.CONNECTING, "$description: " + l.removePrefix("log connect:").trim())
             l.startsWith("error connect") -> ls.onLinkState(LinkState.FAILED, "Bluetooth: ${l.removePrefix("error connect").trim()}")
             l.startsWith("rx ") -> l.substring(3).hexToBytes()?.let { if (proto == MeshProtocol.MESHCORE) ls.onMeshCoreFrame(it) else ls.onFromRadio(it) }
                 ?: ls.onDebugText("Bluetooth helper sent malformed data")

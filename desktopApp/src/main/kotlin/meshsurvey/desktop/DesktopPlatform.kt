@@ -65,7 +65,10 @@ class DesktopPlatform(private val home: File, private val engine: SurveyEngine) 
         }
         LinkKind.BLE -> {
             val cmd = WindowsBle.command() ?: throw IllegalArgumentException(WindowsBle.unavailableReason())
-            HelperBleLink(cmd, option.id.removePrefix("ble:"), option.label.substringBefore(" ("), host?.trim()?.ifEmpty { null }, post)
+            // MeshCore companion radios only accept bonded (PIN-paired) connections; without a PIN, Windows waits for a pairing
+            // that never comes. Their default PIN is 123456 (radios with a screen show theirs); an already paired radio skips this.
+            val pin = host?.trim()?.ifEmpty { null } ?: if (option.label.contains(", MeshCore")) "123456" else null
+            HelperBleLink(cmd, option.id.removePrefix("ble:"), option.label.substringBefore(" ("), pin, post)
         }
         else -> throw IllegalArgumentException("${option.kind.label} is not supported on desktop")
     }

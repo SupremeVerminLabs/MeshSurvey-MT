@@ -49,6 +49,7 @@
 #include <mutex>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -206,6 +207,15 @@ static void closeDevice() {
     if (device) { try { device.Close(); } catch (...) {} device = nullptr; }
 }
 
+// Waits for a WinRT async operation, but never forever: a radio that stops answering (or Windows waiting for a pairing
+// that never comes) must turn into an error message, not a helper stuck in "connecting".
+template <typename Op> static auto waitOp(Op const& op, int seconds, const char* what) {
+    if (op.wait_for(std::chrono::seconds(seconds)) != AsyncStatus::Completed) {
+        if (op.Status() == AsyncStatus::Started) { try { op.Cancel(); } catch (...) {} throw std::runtime_error(std::string(what) + " timed out after " + std::to_string(seconds) + " s"); }
+    }
+    return op.GetResults();   // throws hresult_error if the operation failed
+}
+
 // ---------------------------------------------------------------- commands
 static void cmdAdapter() {
     try {
@@ -282,7 +292,7 @@ static void cmdScan(int seconds) {
 
 static void cmdPair(uint64_t addr, const std::string& pin) {
     try {
-        auto dev = BluetoothLEDevice::FromBluetoothAddressAsync(addr).get();
+        auto dev = waitOp(BluetoothLEDevice::FromBluetoothAddressAsync(addr), 15, "finding the device");
         if (!dev) { emit("error pair device not found (is it switched on and in range?)"); return; }
         auto pairing = dev.DeviceInformation().Pairing();
         if (pairing.IsPaired()) { emit("paired"); dev.Close(); return; }
@@ -291,18 +301,19 @@ static void cmdPair(uint64_t addr, const std::string& pin) {
         auto token = custom.PairingRequested([hpin](const DeviceInformationCustomPairing&, const DevicePairingRequestedEventArgs& a) {
             if (a.PairingKind() == DevicePairingKinds::ProvidePin) a.Accept(hpin); else a.Accept();
         });
-        auto res = custom.PairAsync(DevicePairingKinds::ConfirmOnly | DevicePairingKinds::ProvidePin,
-                                    DevicePairingProtectionLevel::Encryption).get();
+        auto res = waitOp(custom.PairAsync(DevicePairingKinds::ConfirmOnly | DevicePairingKinds::ProvidePin,
+                                    DevicePairingProtectionLevel::Encryption), 40, "pairing");
         custom.PairingRequested(token);
         auto st = res.Status();
         if (st == DevicePairingResultStatus::Paired || st == DevicePairingResultStatus::AlreadyPaired) emit("paired");
         else emit("error pair status " + std::to_string((int)st) + " (wrong PIN, or the radio rejected pairing)");
         dev.Close();
     } catch (const hresult_error& e) { emit("error pair " + err(e)); }
+    catch (const std::exception& e) { emit(std::string("error pair ") + e.what()); }
 }
 
 static GattCharacteristic findChar(const GattDeviceService& s, const guid& id) {
-    auto r = s.GetCharacteristicsForUuidAsync(id, BluetoothCacheMode::Uncached).get();
+    auto r = waitOp(s.GetCharacteristicsForUuidAsync(id, BluetoothCacheMode::Uncached), 15, "reading characteristics");
     if (r.Status() != GattCommunicationStatus::Success || r.Characteristics().Size() == 0) return nullptr;
     return r.Characteristics().GetAt(0);
 }
@@ -313,15 +324,18 @@ static void cmdConnect(uint64_t addr) {
     uint32_t mtu = 0;
     try {
         std::lock_guard<std::mutex> g(gattMx);
-        device = BluetoothLEDevice::FromBluetoothAddressAsync(addr).get();
+        emit("log connect: looking for the device");
+        device = waitOp(BluetoothLEDevice::FromBluetoothAddressAsync(addr), 15, "finding the device");
         if (!device) fail = "device not found (is it switched on and in range?)";
         if (fail.empty()) {
-            session = GattSession::FromDeviceIdAsync(device.BluetoothDeviceId()).get();
+            emit(std::string("log connect: device found (") + (device.DeviceInformation().Pairing().IsPaired() ? "paired" : "not paired") + "); opening session");
+            session = waitOp(GattSession::FromDeviceIdAsync(device.BluetoothDeviceId()), 15, "opening the Bluetooth session");
             if (session) { session.MaintainConnection(true); mtu = session.MaxPduSize(); }
-            auto sr = device.GetGattServicesForUuidAsync(SERVICE, BluetoothCacheMode::Uncached).get();
+            emit("log connect: reading services");
+            auto sr = waitOp(device.GetGattServicesForUuidAsync(SERVICE, BluetoothCacheMode::Uncached), 20, "reading services");
             if (sr.Status() != GattCommunicationStatus::Success) fail = "could not read services (status " + std::to_string((int)sr.Status()) + ")";
             else if (sr.Services().Size() == 0) {
-                auto nr = device.GetGattServicesForUuidAsync(NUS_SERVICE, BluetoothCacheMode::Uncached).get();
+                auto nr = waitOp(device.GetGattServicesForUuidAsync(NUS_SERVICE, BluetoothCacheMode::Uncached), 20, "reading services");
                 if (nr.Status() != GattCommunicationStatus::Success || nr.Services().Size() == 0)
                     fail = "not a Meshtastic or MeshCore radio (neither service found)";
                 else {
@@ -345,7 +359,9 @@ static void cmdConnect(uint64_t addr) {
             }
         }
         if (fail.empty() && meshcore) {
-            auto st = nusTx.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue::Notify).get();
+            emit("log connect: MeshCore radio; subscribing");
+            auto st = waitOp(nusTx.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue::Notify), 20,
+                             "subscribing (the radio may need pairing: PIN on its screen, or 123456)");
             if (st != GattCommunicationStatus::Success) fail = "could not subscribe to the radio (status " + std::to_string((int)st) + "); pair it first (PIN on its screen, or 123456)";
             else {
                 // Each notification is one MeshCore companion frame.
@@ -359,7 +375,7 @@ static void cmdConnect(uint64_t addr) {
             }
         }
         else if (fail.empty()) {
-            auto st = fromNum.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue::Notify).get();
+            auto st = waitOp(fromNum.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue::Notify), 20, "subscribing");
             if (st != GattCommunicationStatus::Success)
                 emit("log could not subscribe to notifications (status " + std::to_string((int)st) + "); polling instead");
             valueToken = fromNum.ValueChanged([](const GattCharacteristic&, const GattValueChangedEventArgs&) { requestDrain(); });
@@ -369,6 +385,7 @@ static void cmdConnect(uint64_t addr) {
             connected = true;
         }
     } catch (const hresult_error& e) { fail = err(e); }
+    catch (const std::exception& e) { fail = e.what(); }
     if (!fail.empty()) { closeDevice(); emit("error connect " + fail); return; }
     emit("connected " + std::to_string(mtu) + (meshcore ? " meshcore" : " meshtastic"));
 }
