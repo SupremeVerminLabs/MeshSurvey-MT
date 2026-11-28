@@ -222,8 +222,10 @@ class SurveyEngine(
             try { switchTo(f()) } catch (e: Exception) { scheduleReconnect("reconnect failed: ${e.message}") }
         }
         radio.tick()
-        // Radio GPS active: re-read the radio's own full-precision position once a minute (local phone API only, no RF).
-        if (radioGps.isEnabled && radio.isReady && clock.monotonicMs() - lastOwnInfoPollMono >= 60_000) {
+        // Re-read the radio's own full-precision position once a minute (local phone API only, no RF) while radio GPS is
+        // in use, and also while the radio has not reported any position yet, so a GPS that gets its first fix after
+        // connecting is picked up within a minute instead of waiting for the radio's next position broadcast.
+        if ((radioGps.isEnabled || _radioPosition.value == null) && radio.isReady && clock.monotonicMs() - lastOwnInfoPollMono >= 60_000) {
             lastOwnInfoPollMono = clock.monotonicMs()
             radio.requestOwnInfo()
         }

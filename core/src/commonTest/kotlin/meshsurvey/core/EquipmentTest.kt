@@ -11,6 +11,7 @@ import meshsurvey.core.proto.BROADCAST
 import meshsurvey.core.proto.Port
 import meshsurvey.core.sim.FromRadioEncoder
 import meshsurvey.core.store.Schema
+import meshsurvey.core.proto.f
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -57,6 +58,18 @@ class EquipmentTest {
         assertEquals("RADIO", o.fixSource)
         assertEquals(4 * 60_000L, o.positionAgeMs)
         assertEquals(0L, o.fixAgeMs)
+    }
+
+    @Test fun radioWithoutPositionIsAskedAgainEachMinuteUntilItHasOne() {
+        val h = Harness()
+        val before = h.link.sent.size
+        h.clock.advance(61_000); h.engine.tick()
+        assertEquals(69420L, meshsurvey.core.proto.Wire.parse(h.link.sent.last()).f(3)!!.u32)    // config-only request, no RF
+        assertEquals(before + 1, h.link.sent.size)
+        h.rx(FromRadioEncoder.nodeInfo(0x0a0a0a0a, "Me", "M", 0, 45.0, -75.0))                     // first fix arrives
+        assertTrue(h.engine.radioPosition.value != null)
+        h.clock.advance(61_000); h.engine.tick()
+        assertEquals(before + 1, h.link.sent.size)                                               // known now, radio GPS not selected: stop asking
     }
 
     @Test fun bundleCarriesProfilesAndProvenance() {
