@@ -2,6 +2,11 @@ package meshsurvey.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +39,7 @@ import meshsurvey.core.proto.MeshEnums
 import meshsurvey.core.radio.FreqSource
 import meshsurvey.core.radio.FrequencyCalc
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MonitorScreen(model: UiModel) {
     val engine = model.engine
@@ -44,6 +50,7 @@ fun MonitorScreen(model: UiModel) {
     val nodes by engine.nodes.collectAsState()
     val events by engine.events.collectAsState()
     var showEvents by remember { mutableStateOf(false) }
+    var details by remember { mutableStateOf(false) }
     val receivers by model.station.receivers.collectAsState()
     var allRadios by remember { mutableStateOf(true) }
     // With several radios, show every radio's receptions merged (newest first), each row tagged with radio and preset.
@@ -56,13 +63,21 @@ fun MonitorScreen(model: UiModel) {
     Column(Modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(10.dp)) {
-                Text("${radioLabel(radio.state)} · ${radio.detail}", fontWeight = FontWeight.Bold)
+                // Always shown: one status line and one summary line. Everything else behind "Details".
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${radioLabel(radio.state)} · ${radio.detail}", fontWeight = FontWeight.Bold, maxLines = 2, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { details = !details }) { Text(if (details) "Less" else "Details") }
+                }
+                val m0 by engine.radioMetrics.collectAsState()
+                Text(listOfNotNull(info.preset, info.myNodeNum?.let { MeshEnums.nodeId(it) }, "logged ${stats.logged}",
+                    "with position ${stats.withPosition}", m0?.batteryText?.let { "power $it" }).joinToString(" · "), fontSize = 13.sp)
+                if (details) {
                 Text("Node ${info.myNodeNum?.let { MeshEnums.nodeId(it) } ?: "?"} · ${info.linkKind?.label ?: "no link"} · firmware ${info.firmware ?: "?"}")
                 val fq = remember(info) { FrequencyCalc.from(info) }
                 Text("Preset ${info.preset ?: "?"} · region ${info.region ?: "?"} · ${fq.params?.label ?: "LoRa parameters unknown"}")
                 Text("Frequency: ${fq.label}", fontSize = 13.sp)
                 if (fq.source == FreqSource.CALCULATED) Text("Calculated by this app from region, preset, slot and channel name using the firmware formula; " +
-                    "the radio does not report its frequency.", fontSize = 11.sp, color = Color.DarkGray)
+                    "the radio does not report its frequency.", fontSize = 11.sp, color = Pal.muted)
                 Text("Position: ${fix?.let { "${fmt(it.lat, 5)}, ${fmt(it.lon, 5)} · ${gpsLabel(it, engine)} · ${it.source}" } ?: "no fix (receptions are logged without position)"} · ${model.gpsStatus}")
                 Text("Logged ${stats.logged} · with position ${stats.withPosition} · encrypted ${stats.encrypted} · queued/late ${stats.queuedLate} · " +
                     "skipped: own ${stats.skippedOwn}, via MQTT ${stats.skippedMqtt}", fontSize = 13.sp)
@@ -73,45 +88,54 @@ fun MonitorScreen(model: UiModel) {
                 Text("Power (reported by radio): " + (m?.batteryText?.let { "$it · as of ${model.platform.formatTime(m!!.wallMs)}" }
                     ?: "not reported yet (sent with the radio's device telemetry, typically every 30–60 min)"), fontSize = 13.sp)
                 if (timing.tickGaps > 0 || timing.clockJumps > 0) Text("Timing: app suspended ${timing.tickGaps}× (longest ${timing.longestGapMs / 1000} s), " +
-                    "clock changed ${timing.clockJumps}× — recorded with the data", fontSize = 12.sp, color = Color(0xFFE65100))
+                    "clock changed ${timing.clockJumps}× — recorded with the data", fontSize = 12.sp, color = Pal.warn)
                 Text("Stock firmware drops duplicate copies before they reach the app: each row is the first copy your node received. " +
-                    "Duplicate receptions are not observed and are not estimated.", fontSize = 11.sp, color = Color.DarkGray)
+                    "Duplicate receptions are not observed and are not estimated.", fontSize = 11.sp, color = Pal.muted)
+                }
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Live receptions (${merged.size})", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        FlowRow(verticalArrangement = Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Live receptions (${merged.size})", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.CenterVertically).padding(end = 8.dp))
             if (receivers.size > 1) TextButton(onClick = { allRadios = !allRadios }) {
-                Text(if (allRadios) "Show only ${engine.radioLabel()}" else "Show all radios")
+                Text(if (allRadios) "Only ${engine.radioLabel()}" else "All radios")
             }
-            TextButton(onClick = { showEvents = !showEvents }) { Text(if (showEvents) "Show packets" else "Show event log (${events.size})") }
+            TextButton(onClick = { showEvents = !showEvents }) { Text(if (showEvents) "Packets" else "Event log (${events.size})") }
         }
         if (showEvents) {
             LazyColumn(Modifier.weight(1f)) { items(events) { Text(it, fontSize = 12.sp, fontFamily = FontFamily.Monospace) } }
         } else {
+          // The table keeps its column widths and scrolls sideways in narrow windows instead of squeezing or overflowing.
+          val multi = receivers.size > 1
+          val cols = listOfNotNull("time" to 72, if (multi) "radio" to 70 else null, "preset" to 100, "from" to 120, "type" to 104, "RSSI" to 48,
+              "SNR" to 52, "hops" to 44, "relay" to 46, "pos" to 34)
+          Box(Modifier.weight(1f).fillMaxWidth().horizontalScroll(rememberScrollState())) {
+           Column(Modifier.width((cols.sumOf { it.second } + 8).dp)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                listOf("time" to 72, "radio" to 70, "preset" to 100, "from" to 120, "type" to 104, "RSSI" to 48, "SNR" to 52, "hops" to 44, "relay" to 46, "pos" to 34).forEach { (h, w) ->
-                    Text(h, fontSize = 11.sp, color = Color.Gray, modifier = Modifier.width(w.dp))
-                }
+                cols.forEach { (h, w) -> Text(h, fontSize = 11.sp, color = Pal.muted, modifier = Modifier.width(w.dp)) }
             }
             LazyColumn(Modifier.weight(1f)) {
                 items(merged) { (rxEngine, o) ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         val name = nodes[o.fromNode]?.shortName ?: rxEngine.nodes.value[o.fromNode]?.shortName ?: MeshEnums.nodeId(o.fromNode)
                         Cell(model.platform.formatTime(o.rxMs), 72)
-                        Cell(rxEngine.radioLabel(), 70)
+                        if (multi) Cell(rxEngine.radioLabel(), 70)
                         Cell(o.preset ?: "?", 100)
                         Cell(name, 120)
                         Cell(o.type.name.lowercase() + if (o.status == RxStatus.QUEUED_LATE) " (late)" else "", 104)
                         Cell(o.rssi?.toString() ?: "?", 48)
-                        Text(o.snr?.let { fmt(it, 1) } ?: "?", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color.White,
-                            modifier = Modifier.width(52.dp).background(o.snr?.let { argb(Scales.snr(it)) } ?: Color.Gray, RoundedCornerShape(3.dp)).padding(horizontal = 3.dp))
+                        val snrBg = o.snr?.let { argb(Scales.snr(it)) } ?: Color.Gray
+                        Text(o.snr?.let { fmt(it, 1) } ?: "?", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = readableOn(snrBg),
+                            modifier = Modifier.width(48.dp).background(snrBg, RoundedCornerShape(3.dp)).padding(horizontal = 3.dp))
+                        Box(Modifier.width(4.dp))
                         Cell(o.hopsAway?.toString() ?: "?", 44)
                         Cell(o.relayByte?.let { it.toString(16).padStart(2, '0') } ?: "–", 46)
                         Cell(if (o.lat != null) "✓" else "–", 34)
                     }
-                    HorizontalDivider(color = Color(0x11000000))
+                    HorizontalDivider(color = Pal.divider)
                 }
             }
+           }
+          }
         }
     }
 }

@@ -57,16 +57,20 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
         title = { Text("Settings") },
         text = {
             Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Section("Appearance")
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ThemeMode.entries.forEach { t -> androidx.compose.material3.FilterChip(model.theme == t, { model.updateTheme(t) }, { Text(t.label) }) }
+                }
                 Section("Radio connection")
                 ConnectionSection(model)
-                msg?.let { Text(it, color = Color(0xFFC62828), fontSize = 12.sp) }
+                msg?.let { Text(it, color = Pal.bad, fontSize = 12.sp) }
 
                 Section("Receiver position (GPS)")
                 Text(model.gpsStatus, fontSize = 13.sp)
                 (listOf(RADIO_GPS_OPTION) + platform.gpsOptions()).forEach { g ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(g.label); g.note?.let { Text(it, fontSize = 11.sp, color = Color.DarkGray) }
+                            Text(g.label); g.note?.let { Text(it, fontSize = 11.sp, color = Pal.muted) }
                         }
                         Button(onClick = {
                             val manual = if (g.needsManual) {
@@ -90,7 +94,7 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                         engine.event("Fixed reference position confirmed by the user from the radio's reported position ${fmt(h.lat, 6)}, ${fmt(h.lon, 6)}")
                     }) { Text("Confirm as fixed reference position") }
                     Text("Copies the radio's current position into a fixed position (source MANUAL) that you have confirmed; " +
-                        "the confirmation is recorded in the event log.", fontSize = 11.sp, color = Color.DarkGray)
+                        "the confirmation is recorded in the event log.", fontSize = 11.sp, color = Pal.muted)
                 }
                 if (model.gpsOption != null) OutlinedButton(onClick = { model.stopGps() }) { Text("Stop GPS") }
 
@@ -105,7 +109,7 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                 }
                 Text("On: this app sends nothing on any connected radio (no tests, no temporary preset changes). " +
                     "Restoring a radio's original settings stays possible. Radios still transmit by themselves as configured " +
-                    "(node info, telemetry, position, relaying others' packets): that is firmware behaviour, not this app.", fontSize = 11.sp, color = Color.DarkGray)
+                    "(node info, telemetry, position, relaying others' packets): that is firmware behaviour, not this app.", fontSize = 11.sp, color = Pal.muted)
                 val tx by engine.appTx.collectAsState()
                 Text("This session: ${tx.count} transmission(s) requested by the app on ${engine.radioLabel()}, " +
                     "estimated ${fmt(tx.estAirtimeMs / 1000, 1)} s airtime (first transmissions only; ACK retries can add up to 2 more each).", fontSize = 12.sp)
@@ -157,7 +161,7 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                 }
                 Text("Viewed online tiles are cached for offline use. Bulk downloading from tile.openstreetmap.org is not allowed by its usage policy. " +
                     "For offline areas use a raster MBTiles file (PNG/JPEG/WebP; vector .pbf MBTiles are not supported), your own tile server, " +
-                    "or a local file:// {z}/{x}/{y} folder.", fontSize = 11.sp, color = Color.DarkGray)
+                    "or a local file:// {z}/{x}/{y} folder.", fontSize = 11.sp, color = Pal.muted)
 
                 Section("Data")
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -172,17 +176,17 @@ fun SettingsDialog(model: UiModel, onClose: () -> Unit) {
                     val r = Bundle.import(t, engine.store, engine.deviceId, engine.clock.wallMs())
                     msg = r.error ?: if (r.duplicateFile) "Already imported" else "Imported ${r.observations} observations, ${r.track} track points, ${r.testTx} tests, ${r.testRx} test receptions"
                 } } }) { Text("Import JSON bundle…") }
-                if (!confirmDelete) TextButton(onClick = { confirmDelete = true }) { Text("Delete all logged data…", color = Color(0xFFC62828)) }
+                if (!confirmDelete) TextButton(onClick = { confirmDelete = true }) { Text("Delete all logged data…", color = Pal.bad) }
                 else Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Delete everything except registered devices?", modifier = Modifier.weight(1f), fontSize = 12.sp)
-                    TextButton(onClick = { engine.store.clearAll(); confirmDelete = false; msg = "All logged data deleted" }) { Text("Delete", color = Color(0xFFC62828)) }
+                    TextButton(onClick = { engine.store.clearAll(); confirmDelete = false; msg = "All logged data deleted" }) { Text("Delete", color = Pal.bad) }
                     TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
                 }
 
                 Section("About")
                 Text("MeshSurvey ${engine.edition} ${engine.appVersion} on ${platform.platformName} · device id ${engine.deviceId} · database schema v${engine.store.schemaVersion()}", fontSize = 12.sp)
                 Text("Passive by default: this app only transmits when you start a controlled test to a device you registered. " +
-                    "Map colours show measurements only; nothing is interpolated.", fontSize = 12.sp, color = Color.DarkGray)
+                    "Map colours show measurements only; nothing is interpolated.", fontSize = 12.sp, color = Pal.muted)
             }
         })
 }

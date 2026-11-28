@@ -61,7 +61,7 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
             Text(if (receivers.size > 1) "Disconnect ${engine.radioLabel()}" else "Disconnect")
         }
         if (wanted) Text("Connecting another radio below adds it alongside this one; each radio logs separately " +
-            "(it can be on a different preset). Tap a radio's chip in the top bar to view it.", fontSize = 11.sp, color = Color.DarkGray)
+            "(it can be on a different preset). Tap a radio's chip in the top bar to view it.", fontSize = 11.sp, color = Pal.muted)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(onClick = { scan() }, enabled = !scanning) { Text(if (scanning) "Searching…" else "Search again") }
             if (options.any { it.needsHost }) OutlinedTextField(host, { host = it }, label = { Text("Network node host (TCP)") }, singleLine = true,
@@ -70,12 +70,12 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
                 label = { Text("Bluetooth PIN") }, singleLine = true, modifier = Modifier.width(150.dp))
         }
         if (options.any { it.needsPin }) Text("PIN is only needed the first time Windows pairs with a radio: radios with a screen show it; " +
-            "screenless radios such as the RAK4631 use 123456 unless changed.", fontSize = 11.sp, color = Color.DarkGray)
+            "screenless radios such as the RAK4631 use 123456 unless changed.", fontSize = 11.sp, color = Pal.muted)
         options.forEach { o ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("${o.kind.label}: ${o.label}", color = if (o.available) Color.Unspecified else Color.Gray)
-                    o.note?.let { Text(it, fontSize = 11.sp, color = Color.DarkGray) }
+                    o.note?.let { Text(it, fontSize = 11.sp, color = Pal.muted) }
                 }
                 val inUse = model.connectedOption.any { (e, id) -> id == o.id && e.connectionWanted.value && o.kind != LinkKind.SIMULATED }
                 Button(enabled = o.available && !inUse, onClick = {
@@ -108,7 +108,7 @@ fun ConnectionSection(model: UiModel, onConnected: () -> Unit = {}) {
             }
         }
         if (radio.state == RadioState.DISCONNECTED && options.isEmpty() && !scanning) Text("No radios found.", fontSize = 12.sp)
-        msg?.let { Text(it, color = Color(0xFFC62828), fontSize = 12.sp) }
+        msg?.let { Text(it, color = Pal.bad, fontSize = 12.sp) }
     }
 }
 

@@ -28,6 +28,22 @@ jobs:
         if: always()
         with: { name: core-test-report, path: core/build/reports/tests/ }
 
+  screens:
+    # Renders the real UI off-screen with simulated data (phone and desktop sizes, dark and light) for review.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Render screens
+        env: { JAVA_TOOL_OPTIONS: -Djava.awt.headless=true }
+        run: bash ./gradlew :desktopApp:run --args="--render-screens $GITHUB_WORKSPACE/screens" --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ui-screens, path: screens/ }
+
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 40

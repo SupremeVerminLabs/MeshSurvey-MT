@@ -46,7 +46,7 @@ fun EquipmentSection(model: UiModel) {
     Text("Reported by the radio (recorded with each session, not part of the profile): " +
         listOfNotNull(radio.info.hwModel?.let { "model ${MeshEnums.hwModelName(it)}" }, radio.info.firmware?.let { "firmware $it" },
             radio.info.region, radio.info.preset, radio.info.txPowerDbm?.let { if (it == 0) "TX power: firmware default" else "TX power $it dBm (configured)" })
-            .joinToString(" · ").ifEmpty { "connect a radio" }, fontSize = 11.sp, color = Color.DarkGray)
+            .joinToString(" · ").ifEmpty { "connect a radio" }, fontSize = 11.sp, color = Pal.muted)
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         FilterChip(activeId == null, { engine.setActiveProfile(null) }, { Text("None") })
         own.forEach { p -> FilterChip(activeId == p.id, { engine.setActiveProfile(p.id) }, { Text(p.name) }) }
@@ -55,7 +55,7 @@ fun EquipmentSection(model: UiModel) {
         OutlinedButton(onClick = { editing = EquipmentProfile(id = newProfileId(), name = "") }) { Text("New profile") }
         if (active != null) OutlinedButton(onClick = { editing = active }) { Text("Edit") }
     }
-    Text("Changing the profile while logging starts a new survey session, so every session belongs to one profile.", fontSize = 11.sp, color = Color.DarkGray)
+    Text("Changing the profile while logging starts a new survey session, so every session belongs to one profile.", fontSize = 11.sp, color = Pal.muted)
     editing?.let { p -> ProfileDialog(p, onSave = { engine.saveProfile(it); if (activeId == null) engine.setActiveProfile(it.id); editing = null },
         onDelete = if (own.any { it.id == p.id }) ({ engine.deleteProfile(p.id); editing = null }) else null, onClose = { editing = null }) }
 }
@@ -81,13 +81,13 @@ private fun ProfileDialog(start: EquipmentProfile, onSave: (EquipmentProfile) ->
             onSave(p.copy(name = p.name.trim(), antennaGainDbi = num(gain), antennaHeightM = num(height), feedlineLengthM = num(feedLen)))
         }) { Text("Save") } },
         dismissButton = { Row {
-            onDelete?.let { TextButton(onClick = it) { Text("Delete", color = Color(0xFFC62828)) } }
+            onDelete?.let { TextButton(onClick = it) { Text("Delete", color = Pal.bad) } }
             TextButton(onClick = onClose) { Text("Cancel") }
         } },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Everything is optional; leave unknown fields empty. Radio model, firmware, region, preset and transmit power " +
-                    "are read from the radio for each session instead.", fontSize = 11.sp, color = Color.DarkGray)
+                    "are read from the radio for each session instead.", fontSize = 11.sp, color = Pal.muted)
                 @Composable fun field(label: String, v: String?, set: (String?) -> Unit) =
                     OutlinedTextField(v ?: "", { set(it.ifEmpty { null }) }, label = { Text(label) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 field("Name (e.g. Rooftop base, Car)", p.name) { p = p.copy(name = it ?: "") }
@@ -107,7 +107,7 @@ private fun ProfileDialog(start: EquipmentProfile, onSave: (EquipmentProfile) ->
                 OutlinedTextField(feedLen, { feedLen = it }, label = { Text("Feedline length, m (approx.)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 field("Enclosure", p.enclosure) { p = p.copy(enclosure = it) }
                 field("Notes (surroundings, obstructions…)", p.notes) { p = p.copy(notes = it) }
-                error?.let { Text(it, color = Color(0xFFC62828), fontSize = 12.sp) }
+                error?.let { Text(it, color = Pal.bad, fontSize = 12.sp) }
             }
         })
 }

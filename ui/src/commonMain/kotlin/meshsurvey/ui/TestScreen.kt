@@ -58,12 +58,12 @@ fun TestScreen(model: UiModel) {
             Text("${engine.radioLabel()} is a MeshCore radio", fontWeight = FontWeight.Bold)
             Text("MeshCore radios are listen-only in this version: the app logs what the radio hears and maps it, but sends nothing " +
                 "and never changes the radio's settings. A/B tests and preset changes are Meshtastic only. MeshCore trace tests may come later.")
-            Text("Select a Meshtastic radio in the top bar to run tests.", fontSize = 12.sp, color = Color.DarkGray)
+            Text("Select a Meshtastic radio in the top bar to run tests.", fontSize = 12.sp, color = Pal.muted)
         }
         return
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Passive logging is always on. Nothing below transmits until you press a send/start button.", fontSize = 12.sp, color = Color.DarkGray)
+        Text("Passive logging is always on. Nothing below transmits until you press a send/start button.", fontSize = 12.sp, color = Pal.muted)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Role:", fontWeight = FontWeight.Bold)
             FilterChip(ab.role == TestRole.A_SURVEY, { engine.ab.setRole(TestRole.A_SURVEY) }, { Text("Device A · survey (sends)") })
@@ -103,7 +103,7 @@ private fun TargetCard(model: UiModel) {
                     meshsurvey.core.model.Participation.CODE -> "participation code ${ab.refCode}"
                     meshsurvey.core.model.Participation.OPERATOR_CONTROLS_B -> "stock radio you control (participation not verifiable)"
                     null -> "participation not set"
-                }, color = if (ab.peerConfirmed) Color(0xFF2E7D32) else Color(0xFFC62828))
+                }, color = if (ab.peerConfirmed) Pal.ok else Pal.bad)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(idText, { idText = it }, label = { Text("B's node ID, e.g. !a1b2c3d4") }, singleLine = true, modifier = Modifier.width(220.dp))
@@ -120,7 +120,7 @@ private fun TargetCard(model: UiModel) {
                 OutlinedTextField(codeText, { codeText = it.filter(Char::isDigit).take(6) }, label = { Text("B's 6-digit participation code") },
                     singleLine = true, modifier = Modifier.width(220.dp))
                 Text("On Device B: Test → Receive tests → Start. B shows the code; its operator tells you (in person, phone, text).",
-                    fontSize = 11.sp, color = Color.DarkGray)
+                    fontSize = 11.sp, color = Pal.muted)
             } else Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(ownsB, { ownsB = it })
                 Text("I own or control this radio. (ACK mode only; B's firmware acknowledges, so its participation can't be verified.)", fontSize = 12.sp)
@@ -139,7 +139,7 @@ private fun TargetCard(model: UiModel) {
                     val p = ab.peer!!
                     engine.store.upsertTestDevice(TestDevice(p, nodes[p]?.longName ?: MeshEnums.nodeId(p), engine.clock.wallMs())); refresh++
                 }) { Text("Remember") }
-                err?.let { Text(it, color = Color(0xFFC62828), fontSize = 12.sp) }
+                err?.let { Text(it, color = Pal.bad, fontSize = 12.sp) }
             }
         }
     }
@@ -160,10 +160,10 @@ private fun SurveyRole(model: UiModel, ready: Boolean) {
             Text("Device A — controlled tests", fontWeight = FontWeight.Bold)
             val rxOnly by model.station.shared.rxOnly.collectAsState()
             if (rxOnly) Text("RX-only mode is on: tests are blocked. Turn it off in Settings (or tap the RX-only chip) to send tests.",
-                fontSize = 12.sp, color = Color(0xFFC62828))
+                fontSize = 12.sp, color = Pal.bad)
             Text("Every test is a real transmission on a shared channel that others rely on. Use the longest spacing that answers your " +
                 "question, stop when you have enough, and avoid busy presets. With ACK requested the radio may send up to 3 times.",
-                fontSize = 12.sp, color = Color(0xFF8D6E00))
+                fontSize = 12.sp, color = Pal.warn)
             Text("Tests run on ${radio.info.preset ?: "preset ?"} · ${fq.label}", fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 FilterChip(ab.mode == DeliveryMode.ACKED, { err = engine.ab.setMode(DeliveryMode.ACKED) }, { Text("ACK requested") })
@@ -176,12 +176,12 @@ private fun SurveyRole(model: UiModel, ready: Boolean) {
                 "One direct message with an ACK request. The firmware makes up to 3 transmissions (initial + 2 retries, the last one flooded) " +
                     "and relays may rebroadcast it. Works with a Device B that is not running this app."
             else "One direct message with hop limit 0: exactly one transmission, never relayed, no ACK. Only Device B's own MeshSurvey log " +
-                    "can confirm reception — use this when B runs MeshSurvey for the least airtime.", fontSize = 12.sp, color = Color.DarkGray)
+                    "can confirm reception — use this when B runs MeshSurvey for the least airtime.", fontSize = 12.sp, color = Pal.muted)
             budget?.let { b ->
                 Text("Estimated airtime of these tests (this radio's test packets only, calculated, not measured): ~${b.airtimePerTransmissionMs.toInt()} ms per " +
                     "transmission, up to ${b.worstCaseMsPerTest.toInt()} ms per test. Spacing ≥ ${b.minIntervalS} s; ≤ ${b.maxTestsPerSession} tests per session. " +
                     "Relays rebroadcasting tests add airtime that cannot be estimated here.", fontSize = 12.sp)
-            } ?: Text("LoRa parameters unknown — connect the radio to compute airtime limits.", fontSize = 12.sp, color = Color(0xFFC62828))
+            } ?: Text("LoRa parameters unknown — connect the radio to compute airtime limits.", fontSize = 12.sp, color = Pal.bad)
             val m by engine.radioMetrics.collectAsState()
             Text(m?.let { "Reported by your radio (all its traffic, its own averaging window): transmitting ${it.airUtilTxPct?.let { v -> fmt(v, 1) } ?: "?"} % · " +
                 "channel busy ${it.channelUtilPct?.let { v -> fmt(v, 1) } ?: "?"} % (all nodes it hears), as of ${model.platform.formatTime(it.wallMs)}" }
@@ -203,15 +203,15 @@ private fun SurveyRole(model: UiModel, ready: Boolean) {
                 else Button(onClick = { engine.ab.stop() }) { Text("STOP NOW") }
             }
             if (ab.autoRunning) Text("Running every ${ab.effectiveIntervalS} s · next in ${ab.nextSendInS ?: "?"} s · ends in " +
-                (ab.remainingS?.let { "${it / 60}:${(it % 60).toString().padStart(2, '0')}" } ?: "?"), color = Color(0xFF2E7D32))
+                (ab.remainingS?.let { "${it / 60}:${(it % 60).toString().padStart(2, '0')}" } ?: "?"), color = Pal.ok)
             (err ?: ab.message)?.let { Text(it, fontSize = 12.sp) }
             Text("This session: sent ${ab.sent} · delivered (destination ACK) ${ab.delivered}" + (if (ab.lateAcks > 0) " (${ab.lateAcks} late)" else "") +
                 " · relay observed only ${ab.relayObserved} · rejected by B ${ab.rejected} · no ACK after retries ${ab.noAck} · " +
                 "not transmitted ${ab.notTransmitted} · unknown ${ab.unknown}", fontSize = 13.sp)
             Text("“Sent” = handed to your radio; if the channel is busy it may transmit later. ACKs that arrive late are still matched.",
-                fontSize = 11.sp, color = Color.DarkGray)
+                fontSize = 11.sp, color = Pal.muted)
             Text("Only “delivered” (or B's own log) proves reception. “Relay observed” means a retransmission was heard; “no ACK” means delivery is unknown.",
-                fontSize = 11.sp, color = Color.DarkGray)
+                fontSize = 11.sp, color = Pal.muted)
             ab.session?.let { s ->
                 val txs = remember(ab) { engine.store.testTx(s.id).takeLast(20).reversed() }
                 txs.forEach { t ->
@@ -239,7 +239,7 @@ private fun PresetCard(model: UiModel) {
             if (change == null) {
                 Menu("Test on another preset…", Presets.selectable.map { p -> MeshEnums.preset(p) to { plan = engine.presets.plan(p) } })
                 Text("Or change the preset yourself in the official app — MeshSurvey reads and records whatever the radio reports.",
-                    fontSize = 11.sp, color = Color.DarkGray)
+                    fontSize = 11.sp, color = Pal.muted)
             } else Text("A temporary preset is open (see banner). Restore it before choosing another.", fontSize = 12.sp)
         }
     }
@@ -264,7 +264,7 @@ private fun PresetPlanDialog(model: UiModel, plan: PresetPlan, onClose: () -> Un
                 Text("Only use_preset and modem_preset are changed. Every other LoRa setting is preserved byte-for-byte, and the exact original " +
                     "configuration is saved on this device before anything is sent.", fontSize = 12.sp)
                 plan.warnings.forEach { Text("• $it", fontSize = 12.sp) }
-                plan.blockers.forEach { Text("✗ $it", fontSize = 12.sp, color = Color(0xFFC62828)) }
+                plan.blockers.forEach { Text("✗ $it", fontSize = 12.sp, color = Pal.bad) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(autoRestore, { autoRestore = it })
                     Text("Restore the original configuration automatically when the timed test session ends", fontSize = 12.sp)
@@ -273,7 +273,7 @@ private fun PresetPlanDialog(model: UiModel, plan: PresetPlan, onClose: () -> Un
                     Checkbox(understood, { understood = it })
                     Text("I understand my radio will reboot and leave my normal mesh until I restore it", fontSize = 12.sp)
                 }
-                err?.let { Text(it, color = Color(0xFFC62828), fontSize = 12.sp) }
+                err?.let { Text(it, color = Pal.bad, fontSize = 12.sp) }
             }
         },
         confirmButton = {
@@ -297,7 +297,7 @@ private fun ReferenceRole(model: UiModel) {
             val s = ref.session
             if (s == null) {
                 Text("Start a session to take part. You'll get a 6-digit code to give to Device A's operator. Only tests with your code are " +
-                    "recorded, and only while the session runs. This radio never transmits test traffic.", fontSize = 12.sp, color = Color.DarkGray)
+                    "recorded, and only while the session runs. This radio never transmits test traffic.", fontSize = 12.sp, color = Pal.muted)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(30 to "30 min", 120 to "2 h", 480 to "8 h").forEach { (min, label) ->
                         Button(onClick = { msg = engine.reference.start(min * 60) }) { Text("Start · $label") }

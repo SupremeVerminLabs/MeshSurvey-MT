@@ -18,7 +18,12 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -60,6 +65,15 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
     var gpsStatus by mutableStateOf("GPS off")
     var peerSendsTests by mutableStateOf(false)
     var centeredOnce = false
+    /** Dark by default; stored with the app's settings. */
+    var theme by mutableStateOf(station.store.getMeta("theme")?.let { t -> ThemeMode.entries.firstOrNull { it.name == t } } ?: ThemeMode.DARK)
+    fun updateTheme(t: ThemeMode) { theme = t; station.store.setMeta("theme", t.name) }
+    private val reportedDrawErrors = HashSet<String>()
+    /** Map drawing failures go to the event log once each (they are bugs to report, not to hide). */
+    fun reportDrawError(e: Throwable) {
+        val key = "${e::class.simpleName}: ${e.message}".take(200)
+        if (reportedDrawErrors.add(key)) engine.event("Map drawing error (layer skipped, please report): $key")
+    }
 
     /** Parsed coverage predictions by stored id (parsing a large GeoJSON on every map refresh would be wasteful). */
     private val predictionCache = HashMap<Long, meshsurvey.core.map.PredictionMap?>()
@@ -102,11 +116,12 @@ class UiModel(val station: Station, val platform: PlatformServices, scope: Corou
  * tick from its Application/foreground service instead so logging survives the activity.
  */
 @Composable
-fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boolean) {
+fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boolean, initialTab: Tab = Tab.MAP,
+                  onModel: (UiModel) -> Unit = {}) {
     val scope = rememberCoroutineScope()
-    val model = remember { UiModel(station, platform, scope) }
+    val model = remember { UiModel(station, platform, scope).also(onModel) }
     val engine = model.engine
-    var tab by remember { mutableStateOf(Tab.MAP) }
+    var tab by remember { mutableStateOf(initialTab) }
     var showSettings by remember { mutableStateOf(false) }
 
     // 1 Hz engine tick (heartbeats, test scheduling, ACK timeouts, simulator) on the UI thread.
@@ -128,8 +143,11 @@ fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boo
     // No position source chosen (typical for a Windows base station) and the radio knows where it is:
     // use the radio's own position automatically. Android keeps the phone GPS, which suits driving.
 
-    MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF1B5E7A), secondary = Color(0xFF2E7D32))) {
+    MeshSurveyTheme(model.theme, isSystemInDarkTheme()) {
         Surface(Modifier.fillMaxSize()) {
+          BoxWithConstraints(Modifier.fillMaxSize()) {
+           // Phone-width layout below 600 dp (Android phones, narrow desktop windows): fewer labels, panels collapsed.
+           CompositionLocalProvider(LocalCompact provides (maxWidth < 600.dp)) {
             Column(Modifier.fillMaxSize()) {
                 TopBar(model, onSettings = { showSettings = true }, onStart = { model.startOpen = true })
                 PresetBanner(model)
@@ -153,51 +171,55 @@ fun MeshSurveyApp(station: Station, platform: PlatformServices, runTickLoop: Boo
                 }
             }
             if (showSettings) SettingsDialog(model) { showSettings = false }
+           }
+          }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TopBar(model: UiModel, onSettings: () -> Unit, onStart: () -> Unit) {
     val engine = model.engine
     val radio by engine.radioStatus.collectAsState()
     val fix by engine.fix.collectAsState()
     val simulated = engine.source() == Source.SIMULATED || fix?.source == FixSource.SIMULATED
-    Row(
-        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primary).padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("MeshSurvey ${engine.edition.name.lowercase().replaceFirstChar { it.uppercase() }}", color = Color.White,
-            fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        val receivers by model.station.receivers.collectAsState()
-        val pm1 by engine.radioMetrics.collectAsState()
-        if (receivers.size <= 1) Chip(radioLabel(radio.state) + (if (radio.info.protocol == MeshProtocol.MESHCORE) " · MeshCore" else "") + batteryShort(pm1), radioColor(radio.state))
-        else receivers.forEach { e ->
-            val st by e.radioStatus.collectAsState()
-            val pm by e.radioMetrics.collectAsState()
-            // one chip per radio; the outlined one is shown in the screens below; tap to switch
-            Text((if (e === engine) "▸ " else "") + "${e.radioLabel()} · ${radioLabel(st.state)}" + batteryShort(pm), color = Color.White, fontSize = 12.sp,
-                modifier = Modifier.background(radioColor(st.state), RoundedCornerShape(10.dp)).clickable { model.engine = e }
-                    .padding(horizontal = 8.dp, vertical = 2.dp))
+    val pal = LocalPalette.current
+    val compact = LocalCompact.current
+    Row(Modifier.fillMaxWidth().background(pal.bar).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.Top) {
+        // Status chips wrap onto a second line in narrow windows instead of running off the screen.
+        FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (!compact) Text("MeshSurvey ${engine.edition.name.lowercase().replaceFirstChar { it.uppercase() }}", color = pal.onBar,
+                fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.align(Alignment.CenterVertically))
+            val receivers by model.station.receivers.collectAsState()
+            val pm1 by engine.radioMetrics.collectAsState()
+            if (receivers.size <= 1) Chip(radioLabel(radio.state) + (if (radio.info.protocol == MeshProtocol.MESHCORE) " · MeshCore" else "") + batteryShort(pm1), radioColor(radio.state))
+            else receivers.forEach { e ->
+                val st by e.radioStatus.collectAsState()
+                val pm by e.radioMetrics.collectAsState()
+                // one chip per radio; ▸ marks the one shown in the screens below; tap to switch
+                Text((if (e === engine) "▸ " else "") + "${e.radioLabel()} · ${radioLabel(st.state)}" + batteryShort(pm), color = Color.White, fontSize = 12.sp,
+                    maxLines = 1, modifier = Modifier.background(radioColor(st.state), RoundedCornerShape(10.dp)).clickable { model.engine = e }
+                        .padding(horizontal = 8.dp, vertical = 2.dp))
+            }
+            Chip(gpsLabel(fix, engine), if (fix != null) ChipColors.good else ChipColors.idle)
+            if (simulated) Chip("SIMULATED", ChipColors.alarm)
+            val rxOnly by model.station.shared.rxOnly.collectAsState()
+            // Always visible: whether this app may transmit. Tap to change (with an explanation in Settings).
+            Text(if (rxOnly) "RX-only" else "TX allowed", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+                modifier = Modifier.background(if (rxOnly) ChipColors.good else ChipColors.busy, RoundedCornerShape(10.dp))
+                    .clickable { model.station.setRxOnly(!rxOnly) }.padding(horizontal = 8.dp, vertical = 2.dp))
+            val tx by engine.appTx.collectAsState()
+            if (tx.count > 0) Chip("App sent ${tx.count}", ChipColors.busy)
         }
-        Chip(gpsLabel(fix, engine), if (fix != null) Color(0xFF2E7D32) else Color(0xFF616161))
-        if (simulated) Chip("SIMULATED", Color(0xFFB71C1C))
-        val rxOnly by model.station.shared.rxOnly.collectAsState()
-        // Always visible: whether this app may transmit. Tap to change (with an explanation in Settings).
-        Text(if (rxOnly) "RX-only" else "TX allowed", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
-            modifier = Modifier.background(if (rxOnly) Color(0xFF2E7D32) else Color(0xFFEF6C00), RoundedCornerShape(10.dp))
-                .clickable { model.station.setRxOnly(!rxOnly) }.padding(horizontal = 8.dp, vertical = 2.dp))
-        val tx by engine.appTx.collectAsState()
-        if (tx.count > 0) Chip("App sent ${tx.count}", Color(0xFFEF6C00))
-        Box(Modifier.weight(1f))
-        if (!model.startOpen) TextButton(onClick = onStart) { Text("Start", color = Color.White) }
-        TextButton(onClick = onSettings) { Text("Settings", color = Color.White) }
+        if (!model.startOpen) TextButton(onClick = onStart, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) { Text("Start", color = pal.onBar) }
+        TextButton(onClick = onSettings, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) { Text(if (compact) "⚙" else "Settings", color = pal.onBar) }
     }
 }
 
 @Composable
 fun Chip(text: String, color: Color) {
-    Text(text, color = Color.White, fontSize = 12.sp,
+    Text(text, color = Color.White, fontSize = 12.sp, maxLines = 1,
         modifier = Modifier.background(color, RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 2.dp))
 }
 
@@ -210,10 +232,10 @@ fun radioLabel(s: RadioState) = when (s) {
 }
 
 fun radioColor(s: RadioState) = when (s) {
-    RadioState.READY -> Color(0xFF2E7D32)
-    RadioState.FAILED -> Color(0xFFC62828)
-    RadioState.DISCONNECTED -> Color(0xFF616161)
-    else -> Color(0xFFEF6C00)
+    RadioState.READY -> ChipColors.good
+    RadioState.FAILED -> ChipColors.bad
+    RadioState.DISCONNECTED -> ChipColors.idle
+    else -> ChipColors.busy
 }
 
 fun gpsLabel(fix: Fix?, engine: SurveyEngine): String {
@@ -232,14 +254,15 @@ fun PresetBanner(model: UiModel) {
     val c = change ?: return
     var msg by remember { mutableStateOf<String?>(null) }
     val thisRadio = radio.info.myNodeNum == c.nodeNum
-    Row(Modifier.fillMaxWidth().background(Color(0xFFFFF3E0)).padding(horizontal = 12.dp, vertical = 6.dp),
+    val pal = LocalPalette.current
+    Row(Modifier.fillMaxWidth().background(pal.banner).padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Temporary test preset ${c.targetPreset} (normally ${c.originalPreset ?: "?"}) on ${meshsurvey.core.proto.MeshEnums.nodeId(c.nodeNum)}: " +
             c.status.name.lowercase().replace('_', ' ') + (c.note?.let { " — $it" } ?: "") + (msg?.let { " · $it" } ?: ""),
-            fontSize = 13.sp, modifier = Modifier.weight(1f))
+            fontSize = 13.sp, color = pal.onBanner, modifier = Modifier.weight(1f))
         if (thisRadio && radio.state == RadioState.READY && c.status != meshsurvey.core.model.PresetChangeStatus.RESTORING)
             TextButton(onClick = { msg = engine.presets.restore() ?: "restore sent" }) { Text("Restore original now") }
-        else if (!thisRadio) Text("Connect that radio to restore", fontSize = 12.sp)
+        else if (!thisRadio) Text("Connect that radio to restore", fontSize = 12.sp, color = pal.onBanner)
     }
 }
 
@@ -248,6 +271,7 @@ fun PresetBanner(model: UiModel) {
  * "Just listen" is the default: passive logging needs nothing else.
  */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 fun StartPanel(model: UiModel, onChoose: (Tab, meshsurvey.core.model.TestRole?) -> Unit) {
     val engine = model.engine
     val radio by engine.radioStatus.collectAsState()
@@ -255,8 +279,8 @@ fun StartPanel(model: UiModel, onChoose: (Tab, meshsurvey.core.model.TestRole?) 
     val fix by engine.fix.collectAsState()
     var connectOpen by remember { mutableStateOf(false) }
     val ready = radio.state == RadioState.READY
-    androidx.compose.material3.Card(Modifier.fillMaxWidth().padding(8.dp)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    androidx.compose.material3.Card(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("1  Radio", fontWeight = FontWeight.Bold, modifier = Modifier.width(80.dp))
                 if (!wanted) androidx.compose.material3.Button(onClick = { connectOpen = true }) { Text("Connect radio") }
@@ -269,12 +293,14 @@ fun StartPanel(model: UiModel, onChoose: (Tab, meshsurvey.core.model.TestRole?) 
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("3  Do", fontWeight = FontWeight.Bold, modifier = Modifier.width(80.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 androidx.compose.material3.OutlinedButton(enabled = wanted, onClick = { onChoose(Tab.MAP, null) }) { Text("Just listen") }
                 androidx.compose.material3.OutlinedButton(enabled = wanted, onClick = { onChoose(Tab.TEST, meshsurvey.core.model.TestRole.A_SURVEY) }) { Text("Send tests (A)") }
                 androidx.compose.material3.OutlinedButton(enabled = wanted, onClick = { onChoose(Tab.TEST, meshsurvey.core.model.TestRole.B_REFERENCE) }) { Text("Receive tests (B)") }
+                }
             }
             Text("Listening never transmits. Tests are short private messages to one radio whose operator takes part.",
-                fontSize = 11.sp, color = Color.DarkGray)
+                fontSize = 11.sp, color = Pal.muted)
         }
     }
     if (connectOpen) ConnectDialog(model) { connectOpen = false }
@@ -293,3 +319,6 @@ fun batteryShort(m: meshsurvey.core.radio.RadioMetrics?): String = when {
     m.voltage != null && m.voltage!! > 0 -> " · ${fmt(m.voltage!!, 2)} V"
     else -> ""
 }
+
+/** True in phone-width layouts (below 600 dp). */
+val LocalCompact = staticCompositionLocalOf { false }

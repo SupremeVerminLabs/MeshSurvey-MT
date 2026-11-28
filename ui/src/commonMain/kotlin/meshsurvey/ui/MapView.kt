@@ -125,6 +125,8 @@ fun SlippyMap(
     modifier: Modifier = Modifier,
     onTap: (Projector, Offset) -> Unit = { _, _ -> },
     overlay: DrawScope.(Projector) -> Unit = {},
+    /** A failing overlay layer is reported here and skipped for that frame instead of closing the app. */
+    onDrawError: (Throwable) -> Unit = {},
 ) {
     // plain holder (not snapshot state): written during draw, read by gesture handlers
     val sizeRef = remember { arrayOf(Size(1f, 1f)) }
@@ -154,7 +156,7 @@ fun SlippyMap(
                 }
         ) {
             sizeRef[0] = size
-            drawRect(Color(0xFFE8E4DC))
+            drawRect(Color(0xFFE8E4DC))   // land colour behind tiles (tiles stay light in both themes)
             val z = floor(state.zoom).toInt().coerceIn(0, 19)
             val n = 1 shl z
             val tilePx = 256.0 * 2.0.pow(state.zoom - z)
@@ -169,7 +171,7 @@ fun SlippyMap(
                 drawImage(img, srcOffset = IntOffset.Zero, srcSize = IntSize(img.width, img.height),
                     dstOffset = IntOffset((tx * tilePx - left).roundToInt(), (ty * tilePx - top).roundToInt()), dstSize = IntSize(sz, sz))
             }
-            overlay(Projector(state, size))
+            try { overlay(Projector(state, size)) } catch (e: Exception) { onDrawError(e) }
         }
     }
 }

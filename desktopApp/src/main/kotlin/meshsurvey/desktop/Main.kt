@@ -24,6 +24,9 @@ fun main(args: Array<String>) {
     // Used by CI on the *installed* app to prove the bundled runtime has everything it needs.
     val st = args.indexOf("--self-test")
     if (st >= 0) exitProcess(SelfTest.run(File(args.getOrNull(st + 1) ?: "meshsurvey-selftest.json")))
+    // Used by CI to render the UI with simulated data for layout and contrast review.
+    val rs = args.indexOf("--render-screens")
+    if (rs >= 0) exitProcess(Screens.run(File(args.getOrNull(rs + 1) ?: "screens")))
 
     val home = File(System.getProperty("meshsurvey.home") ?: (System.getProperty("user.home") + File.separator + ".meshsurvey")).apply { mkdirs() }
     // The Windows launcher has no console, so write any crash to a file the user can send us.
