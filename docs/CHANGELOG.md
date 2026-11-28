@@ -106,7 +106,7 @@ Baseline: GitHub Actions run 46090544108 green (core-tests, android, windows inc
 
 ### Tests that ran
 Local core suite (kotlinc, real SQLite incl. v4 migration): **102/102 pass**: new `EquipmentTest` (4), `ConfidenceTest` (4), 3 new radio GPS tests.
-UI compiled only on GitHub Actions (see build result below).
+UI compiled only on GitHub Actions: run 46093944819 **all jobs green** (core-tests, android, windows incl. installed-app self-test).
 
 ### Deviations / not yet done
 * Sessions themselves are exported but not yet imported from other devices (needed for multi-device consolidation; step 4).
